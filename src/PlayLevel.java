@@ -1,6 +1,7 @@
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Map;
 
 import agents.superMarioRL.Agent;
 import engine.core.MarioAgent;
@@ -48,12 +49,17 @@ public class PlayLevel {
                     agent.setSelection("greedy");
                     game.setupVisuals(4);
                     printResults(game.runGame(agent, getLevel(level), 30, 0, true, 30, 4));
-//                    game.gameLoop(getLevel(level), 20, 0, true, 30);
                     agent.setSelection("epsilongreedy");
                 }
                 System.out.println("Episode: " + (j+1));
                 game.runGame(agent, getLevel(level), 30, 0, false, 0, 4);
-//                game.gameLoop(getLevel(level), 20, 0, false, 0);
+                for (Map.Entry entry : agent.Q.entrySet()) {
+                    System.out.println("State:" + entry.getKey());
+                    for (double action: (double[])entry.getValue()) {
+                        System.out.print(action + " ");
+                    }
+                    System.out.println("");
+                }
             }
         }
 

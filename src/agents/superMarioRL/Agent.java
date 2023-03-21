@@ -134,7 +134,7 @@ import java.lang.Math;
 public class Agent implements MarioAgent {
 
     private boolean[] actions; // boolean with a true false value. true if the action is to be taken and false if not
-    private HashMap<String, double[]> Q; // action-value estimate
+    public HashMap<String, double[]> Q; // action-value estimate
 
     private String algorithm = "qlearning";
 
@@ -597,7 +597,7 @@ public class Agent implements MarioAgent {
             this.bestProgress = progress;
         }
 
-        System.out.println(reward + " " + difference);
+//        System.out.println(reward + " " + difference);
 
         if (onGround && marioPos[1] < 13 && !wasElevated) {
             System.out.println("Elevated reward:" + marioPos[1]);
