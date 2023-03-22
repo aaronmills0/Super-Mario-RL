@@ -5,6 +5,7 @@ import engine.core.MarioForwardModel;
 import engine.core.MarioTimer;
 import engine.helper.GameStatus;
 import engine.helper.MarioActions;
+import engine.sprites.Mario;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -136,14 +137,14 @@ public class Agent implements MarioAgent {
     private boolean[] actions; // boolean with a true false value. true if the action is to be taken and false if not
     public HashMap<String, double[]> Q; // action-value estimate
 
+    public HashMap<String, double[]> Q2; // action-value estimate used for Double Q-Learning
+
     private String algorithm = "qlearning";
 
     private String selection = "epsilongreedy";
 
     // Keep track of certain attributes to assist in computing reward and or state
     private double percentCompleted = 0.0;
-
-    private double bestProgress = 0;
     public int stuckCounter = 0;
     private final int STUCK_LIMIT = 48; // stuck for 48 frames
     private int prevMarioMode = 0;
@@ -152,28 +153,25 @@ public class Agent implements MarioAgent {
     private final int NEARBY_RADIUS = 3;
     private final int MIDRANGE_RADIUS = 7;
     private final int FARRANGE_RADIUS = 11;
-    private final int PROGRESS_REWARD_MULTIPLIER = 200;
-
-    private final int PROGRESS_PENALTY_MULTIPLIER = 100;
-
+    private final int PROGRESS_REWARD_MULTIPLIER = 1000;
     private final int ELEVATED_REWARD = 1;
-    private final int WIN_REWARD = 250;
-    private final int LOSE_PENALTY = 100;
+    private final int WIN_REWARD = 500;
+
+    private final int LOSE_PENALTY = 25;
     private final int ELIM_REWARD = 1;
-    private final int COLLISION_PENALTY = 50;
-    private final int STUCK_PENALTY = 50;
-    private final double EPSILON = 0.1;
-    private final double GAMMA = 0.99;
-    private final double ALPHA = 0.05;
+    private final int COLLISION_PENALTY = 5;
+    private final double EPSILON = 0.3;
+    private final double GAMMA = 0.6;
+    private final double ALPHA = 0.15;
     private final int ACTION_SPACE = 14;
+    private int time = 0;
 
-    private boolean wasElevated = false;
+    private int elevation = 0;
 
-    private final double NO_PROGRESS_PENALTY = 0;
+    private final double TIME_MULTIPLIER = 0.5;
+    public static boolean onTile = true;
 
-    public int noProgressCounter = 0;
-
-    private final int NO_PROGRESS_LIMIT = 15;
+    public double bestProgress = 0;
 
 
     /*
@@ -226,9 +224,11 @@ public class Agent implements MarioAgent {
         this.selection = selection;
     }
 
-    public void resetProgress() {
-        this.percentCompleted = 0;
-        this.bestProgress = 0;
+    public void resetProgress(MarioForwardModel model) {
+        this.percentCompleted = model.getCompletionPercentage();
+        this.elimByStomp = 0;
+        this.elimByFire = 0;
+        this.bestProgress = percentCompleted;
     }
 
     private String velocityRepresentation(float[] velocity) {
@@ -253,23 +253,49 @@ public class Agent implements MarioAgent {
         }
     }
 
-    private String obstaclesInFront(int[] marioPos, int[][] tiles) {
-        boolean[] obstacles = new boolean[4];
+    private String obstaclesAround(int[] marioPos, int[][] tiles) {
+        boolean[] obstacles = new boolean[11];
         Arrays.fill(obstacles, false);
         // [HIGHEST, HIGH, LOW, LOWEST]
         int posX = marioPos[0] + 1;
         int posY = marioPos[1];
 
-        for (int i=0;i<obstacles.length;i++) {
+        for (int i=0;i<obstacles.length/2;i++) {
             if (posY + i > CANVAS_MAX) {
                 break;
             }
-            if (tiles[posX][posY+i] > 0) {
+            if (tiles[posX][posY+i-1] > 0) {
+                obstacles[i] = true;
+            }
+        }
+        for (int i=obstacles.length/2; i<obstacles.length-1;i++) {
+            if (posY + i + 1 > CANVAS_MAX) {
+                break;
+            }
+
+            if (tiles[posX+1][posY+i-1] > 0) {
                 obstacles[i] = true;
             }
         }
 
-        StringBuilder result = new StringBuilder(4);
+//        if (this.selection.equals("epsilongreedytest")) {
+//            System.out.println("*************************************************************************************************");
+//            System.out.println(Arrays.toString(marioPos));
+//            System.out.println("*************************************************************************************************");
+//            for (int[] array : tiles) {
+//                System.out.println(Arrays.toString(array));
+//            }
+//            System.out.println("*************************************************************************************************");
+//        }
+        if (marioPos[1] < CANVAS_MAX && tiles[marioPos[0]][marioPos[1]+1] > 0) {
+            this.onTile = true;
+            obstacles[obstacles.length-1] = true;
+        } else {
+            this.onTile = false;
+            obstacles[obstacles.length-1] = false;
+        }
+
+        StringBuilder result = new StringBuilder(6);
         for (boolean obstacle : obstacles) {
             if (obstacle) {
                 result.append('1');
@@ -397,22 +423,49 @@ public class Agent implements MarioAgent {
     }
 
     public int epsilonGreedySelection(String state, double epsilon) {
-        if (!Q.containsKey(state)) {
-            double[] stateActions = new double[ACTION_SPACE];
-            Arrays.fill(stateActions, 0.0);
-            Q.put(state, stateActions);
-        }
-
-        double[] stateActions = Q.get(state);
-
         int maxIndex = 0;
-        double maxValue = stateActions[0];
-
-        for (int i=1; i<stateActions.length;i++) {
-            if (stateActions[i] > maxValue) {
-                maxValue = stateActions[i];
-                maxIndex = i;
+        if (!this.algorithm.equals("doubleqlearning")) {
+            if (!Q.containsKey(state)) {
+                double[] stateActions = new double[ACTION_SPACE];
+                Arrays.fill(stateActions, 0.0);
+                Q.put(state, stateActions);
             }
+
+            double[] stateActions = Q.get(state);
+
+            double maxValue = stateActions[0];
+
+            for (int i=1; i<stateActions.length;i++) {
+                if (stateActions[i] > maxValue) {
+                    maxValue = stateActions[i];
+                    maxIndex = i;
+                }
+            }
+        } else {
+            if (!Q.containsKey(state)) {
+                double[] stateActions = new double[ACTION_SPACE];
+                Arrays.fill(stateActions, 0.0);
+                Q.put(state, stateActions);
+            }
+            if (!Q2.containsKey(state)) {
+                double[] stateActions = new double[ACTION_SPACE];
+                Arrays.fill(stateActions, 0.0);
+                Q2.put(state, stateActions);
+            }
+
+            double[] stateActions = Q.get(state);
+
+            double[] stateActions2 = Q2.get(state);
+
+            double maxValue = stateActions[0] + stateActions2[0];
+
+            for (int i=1; i<stateActions.length;i++) {
+                if (stateActions[i] + stateActions2[i] > maxValue) {
+                    maxValue = stateActions[i] + stateActions2[i];
+                    maxIndex = i;
+                }
+            }
+
         }
 
         Random rand = new Random();
@@ -422,6 +475,7 @@ public class Agent implements MarioAgent {
         }
 
         return maxIndex;
+
     }
 
     public void qlearningUpdate(String state, int action, double reward, String nextState) {
@@ -440,13 +494,65 @@ public class Agent implements MarioAgent {
         Q.get(state)[action] = ALPHA*(reward + GAMMA*Q.get(nextState)[nextAction] - Q.get(state)[action]);
     }
 
+    public void doubleqlearningUpdate(String state, int action, double reward, String nextState) {
+        Random rand = new Random();
+
+        int randomInt = rand.nextInt(2);
+
+        if (randomInt == 0) {
+            double[] nextStateActions = Q2.get(nextState);
+            double maxValue = nextStateActions[0];
+            for (int i=1;i<ACTION_SPACE;i++) {
+                if (nextStateActions[i] > maxValue) {
+                    maxValue = nextStateActions[i];
+                }
+            }
+
+            Q.get(state)[action] = ALPHA*(reward + GAMMA*maxValue - Q.get(state)[action]);
+        } else {
+            double[] nextStateActions = Q.get(nextState);
+            double maxValue = nextStateActions[0];
+            for (int i=1;i<ACTION_SPACE;i++) {
+                if (nextStateActions[i] > maxValue) {
+                    maxValue = nextStateActions[i];
+                }
+            }
+
+            Q2.get(state)[action] = ALPHA*(reward + GAMMA*maxValue - Q2.get(state)[action]);
+        }
+    }
+
+    public void expectedsarsaUpdate(String state, int action, double reward, String nextState) {
+
+        double[] nextStateActions = Q.get(nextState);
+        int maxAction = 0;
+        double maxValue = nextStateActions[0];
+        for (int i=1;i<ACTION_SPACE;i++) {
+            if (nextStateActions[i] > maxValue) {
+                maxValue = nextStateActions[i];
+                maxAction = i;
+            }
+        }
+
+        double expectation = 0;
+
+        expectation += (1 - EPSILON + EPSILON/(double)ACTION_SPACE)*maxValue;
+
+        for (int i=0; i<ACTION_SPACE; i++) {
+            if (i == maxAction) {
+                continue;
+            }
+            expectation += (EPSILON/(double)ACTION_SPACE)*nextStateActions[i];
+        }
+
+        Q.get(state)[action] = ALPHA*(reward + GAMMA*expectation - Q.get(state)[action]);
+    }
+
     @Override
     public void initialize(MarioForwardModel model, MarioTimer timer) {
-        this.resetProgress();
-        this.noProgressCounter = 0;
-        this.stuckCounter = 0;
-        this.elimByFire = 0;
-        this.elimByStomp = 0;
+        this.resetProgress(model);
+        this.time = model.getRemainingTime();
+        this.elevation = model.getMarioScreenTilePos()[1];
     }
 
     public void setupAgent() {
@@ -457,14 +563,10 @@ public class Agent implements MarioAgent {
         this.actions = new boolean[MarioActions.numberOfActions()];
         Arrays.fill(this.actions, false);
         this.Q = new HashMap<>();
+        this.Q2 = new HashMap<>();
     }
 
-    @Override
-    public boolean[] getActions(MarioForwardModel model, MarioTimer timer) {
-        if (model.getGameStatus().equals(GameStatus.LOSE) || model.getGameStatus().equals(GameStatus.TIME_OUT)) {
-            return this.actions;
-        }
-
+    public String formulateState(MarioForwardModel model) {
         // Formulate state
         StringBuilder state = new StringBuilder(40);
 
@@ -565,9 +667,12 @@ public class Agent implements MarioAgent {
         // 12. Obstacles: Indicates whether there exists obstacles in the 4 tiles in front of Mario.
 
         int[][] tiles = model.getMarioSceneObservation();
+        tiles = model.getScreenSceneObservation();
 
-        String obstaclesResult = obstaclesInFront(marioPos, tiles);
+        String obstaclesResult = obstaclesAround(marioPos, tiles);
         state.append(obstaclesResult);
+
+        return state.toString();
 
         /*
 
@@ -576,76 +681,124 @@ public class Agent implements MarioAgent {
             [BYSTOMP (1 bit)] [BYFIRE (1 bit)] [OBSTACLES (4 bits)]
 
          */
+    }
 
+    public double computeReward(MarioForwardModel model) {
         // Compute Reward
         double reward = 0;
         double progress = model.getCompletionPercentage();
         double difference = progress - this.percentCompleted;
-//        System.out.println(this.percentCompleted + " " + progress + " " + difference);
         this.percentCompleted = progress;
 
-        if (difference > 0) {
-            reward += PROGRESS_REWARD_MULTIPLIER*Math.signum(difference)*Math.pow(difference, 2);
-        } else {
-            reward += PROGRESS_PENALTY_MULTIPLIER*Math.signum(difference)*Math.pow(difference, 2);
+        reward += PROGRESS_REWARD_MULTIPLIER*difference;
+
+//        if (PROGRESS_REWARD_MULTIPLIER* difference < PROGRESS_TOL) {
+//            reward -= 1;
+//        }
+
+        double deltaT = TIME_MULTIPLIER*(double)(model.getRemainingTime() - this.time )/100;
+
+        if (this.selection.equals("greedy")) {
+            System.out.println("Time: " + this.time);
+            System.out.println("Remaining Time: " + model.getRemainingTime());
+            System.out.println(deltaT);
         }
 
-        if (progress <= this.bestProgress) {
-            reward -= NO_PROGRESS_PENALTY;
-        }
-        if (progress > this.bestProgress) {
-            this.bestProgress = progress;
+        this.time = model.getRemainingTime();
+        if (deltaT > 0) { // Safety
+            deltaT = 0;
         }
 
-//        System.out.println(reward + " " + difference);
+        reward += deltaT;
 
-        if (onGround && marioPos[1] < 13 && !wasElevated) {
-            System.out.println("Elevated reward:" + marioPos[1]);
-            reward += ELEVATED_REWARD;
-            wasElevated = true;
-        }else if (onGround) {
-            wasElevated = false;
+        double elevationReward = 0;
+//        if (this.selection.equals("epsilongreedytest")) {
+//            System.out.println("GROUND: "+ model.isMarioOnGround() + " " + marioPos[1]);
+//        }
+        if (this.onTile && progress > this.bestProgress) {
+            if (model.getMarioScreenTilePos()[1] < this.elevation) {
+                elevationReward += Math.pow(this.elevation - model.getMarioScreenTilePos()[1], 2);
+                if (this.selection.equals("epsilongreedytest")) {
+                    System.out.println("ELEVATION REWARD: " + elevationReward + " " + model.getMarioScreenTilePos()[1] + " " + this.elevation);
+                }
+            }
+            this.elevation = model.getMarioScreenTilePos()[1];
         }
 
-        if (collided) {
-            reward -= COLLISION_PENALTY;
-        }
+        reward += ELEVATED_REWARD*elevationReward;
 
-        if (gotStuck) {
-            reward -= STUCK_PENALTY;
-        }
+//        if (collided) {
+//            reward -= COLLISION_PENALTY;
+//        }
 
-        if (byStomp || byFire) {
-            reward += ELIM_REWARD;
+        int stompElim = 0;
+        if (model.getKillsByStomp() > this.elimByStomp) {
+            stompElim = model.getKillsByStomp() - this.elimByStomp;
+            this.elimByStomp = model.getKillsByStomp();
         }
+        reward += ELIM_REWARD*stompElim;
+
+        int fireElim = 0;
+        if (model.getKillsByFire() > this.elimByFire) {
+            fireElim = model.getKillsByFire() - this.elimByFire;
+            this.elimByFire = model.getKillsByFire();
+        }
+        reward += ELIM_REWARD*fireElim;
 
         if (model.getGameStatus().equals(GameStatus.WIN)) {
             reward += WIN_REWARD;
+            System.out.println("**************************************************");
+            System.out.println("VICTORY");
+            System.out.println("**************************************************");
         } else if (model.getGameStatus().equals(GameStatus.LOSE)) {
             reward -= LOSE_PENALTY;
         }
-        // Select next action using the chosen algorithm
-        // For selection we will use epsilon-greedy
+        this.bestProgress = progress;
+        return reward;
+    }
+
+    public int getNextAction(String state) {
         int nextAction = 0;
-        if (this.selection.equals("epsilongreedy")) {
-            nextAction = epsilonGreedySelection(state.toString(), EPSILON);
+        if (this.selection.equals("epsilongreedy") || this.selection.equals("epsilongreedytest")) {
+            nextAction = epsilonGreedySelection(state, EPSILON);
         } else if (this.selection.equals("greedy")) {
-            nextAction = greedySelection(state.toString());
+            nextAction = greedySelection(state);
         }
+        return nextAction;
+    }
+
+    @Override
+    public boolean[] getActions(MarioForwardModel model, MarioTimer timer) {
+
+        if (model.getCompletionPercentage() > 0.355) {
+            System.out.println(model.getCompletionPercentage() + " PASSED THE PIPES");
+        }
+
+        String state = formulateState(model);
+        double reward = computeReward(model);
+        int nextAction = getNextAction(state);
+
+//        if (this.selection.equals("epsilongreedytest")) {
+//            System.out.println(reward + " " + PROGRESS_REWARD_MULTIPLIER*difference + " " + deltaT + " " + elevationReward + " " + stompElim + " " + fireElim + " " + model.getGameStatus());
+//        }
 
 
         // Perform update
         if (this.prevState == null) {
-            this.prevState = state.toString();
+            this.prevState = state;
         }
         if (this.algorithm.equals("qlearning")) {
-            qlearningUpdate(prevState, prevAction, reward, state.toString());
+            qlearningUpdate(prevState, prevAction, reward, state);
         } else if (this.algorithm.equals("sarsa")) {
-            sarsaUpdate(prevState, prevAction, reward, state.toString(), nextAction);
+            sarsaUpdate(prevState, prevAction, reward, state, nextAction);
+        } else if (this.algorithm.equals("doubleqlearning")) {
+            doubleqlearningUpdate(prevState, prevAction, reward, state);
+        } else if (this.algorithm.equals("expectedsarsa")) {
+            expectedsarsaUpdate(prevState, prevAction, reward, state);
         }
 
         this.prevAction = nextAction;
-        this.prevState = state.toString();
+        this.prevState = state;
 
         return ACTION_MAP[nextAction].clone();
     }

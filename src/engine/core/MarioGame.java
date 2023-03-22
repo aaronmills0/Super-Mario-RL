@@ -290,6 +290,8 @@ public class MarioGame {
                 }
             }
         }
+        // Update model after a loss
+        boolean[] actions = this.agent.getActions(new MarioForwardModel(this.world.clone()), agentTimer);
         return new MarioResult(this.world, gameEvents, agentEvents);
     }
 }

@@ -11,7 +11,7 @@ import engine.core.MarioResult;
 public class PlayLevel {
 
     public static final int runs = 10;
-    public static final int episodes = 150000;
+    public static final int episodes = 5000;
     public static void printResults(MarioResult result) {
         System.out.println("****************************************************************");
         System.out.println("Game Status: " + result.getGameStatus().toString() +
@@ -43,23 +43,16 @@ public class PlayLevel {
         for (int i=0; i<runs;i++) {
 
             Agent agent = new agents.superMarioRL.Agent();
-            setupAgentAndGame(agent, game, "qlearning", "epsilongreedy");
+            setupAgentAndGame(agent, game, "doubleqlearning", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
-                if (j >= 999 && (j-999)%1000 == 0) {
-                    agent.setSelection("greedy");
+                if (j%1000 == 0) {
+                    agent.setSelection("epsilongreedytest");
                     game.setupVisuals(4);
-                    printResults(game.runGame(agent, getLevel(level), 30, 0, true, 30, 4));
+                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 30, 4));
                     agent.setSelection("epsilongreedy");
                 }
                 System.out.println("Episode: " + (j+1));
-                game.runGame(agent, getLevel(level), 30, 0, false, 0, 4);
-                for (Map.Entry entry : agent.Q.entrySet()) {
-                    System.out.println("State:" + entry.getKey());
-                    for (double action: (double[])entry.getValue()) {
-                        System.out.print(action + " ");
-                    }
-                    System.out.println("");
-                }
+                game.runGame(agent, getLevel(level), 0, 0, false, 0, 4);
             }
         }
 

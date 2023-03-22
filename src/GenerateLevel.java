@@ -1,8 +1,4 @@
-import engine.core.MarioGame;
-import engine.core.MarioLevelGenerator;
-import engine.core.MarioLevelModel;
-import engine.core.MarioResult;
-import engine.core.MarioTimer;
+import engine.core.*;
 
 public class GenerateLevel {
     public static void printResults(MarioResult result) {
