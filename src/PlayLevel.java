@@ -11,7 +11,7 @@ import engine.core.MarioResult;
 public class PlayLevel {
 
     public static final int runs = 10;
-    public static final int episodes = 5000;
+    public static final int episodes = 10000;
     public static void printResults(MarioResult result) {
         System.out.println("****************************************************************");
         System.out.println("Game Status: " + result.getGameStatus().toString() +
@@ -45,12 +45,14 @@ public class PlayLevel {
             Agent agent = new agents.superMarioRL.Agent();
             setupAgentAndGame(agent, game, "doubleqlearning", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
-                if (j%1000 == 0) {
+
+                if (j%2500 == 0) {
                     agent.setSelection("epsilongreedytest");
                     game.setupVisuals(4);
                     printResults(game.runGame(agent, getLevel(level), 60, 0, true, 30, 4));
                     agent.setSelection("epsilongreedy");
                 }
+                agent.initializeEpisode();
                 System.out.println("Episode: " + (j+1));
                 game.runGame(agent, getLevel(level), 0, 0, false, 0, 4);
             }

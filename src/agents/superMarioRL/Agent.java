@@ -7,6 +7,7 @@ import engine.helper.GameStatus;
 import engine.helper.MarioActions;
 import engine.sprites.Mario;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Random;
@@ -173,6 +174,9 @@ public class Agent implements MarioAgent {
 
     public double bestProgress = 0;
 
+    public ArrayList<ArrayList<String[]>> performanceData;
+
+    public ArrayList<String[]> episodeData;
 
     /*
 
@@ -229,6 +233,11 @@ public class Agent implements MarioAgent {
         this.elimByStomp = 0;
         this.elimByFire = 0;
         this.bestProgress = percentCompleted;
+        this.performanceData = new ArrayList<>();
+    }
+
+    public void initializeEpisode() {
+        this.episodeData = new ArrayList<>();
     }
 
     private String velocityRepresentation(float[] velocity) {
@@ -564,6 +573,7 @@ public class Agent implements MarioAgent {
         Arrays.fill(this.actions, false);
         this.Q = new HashMap<>();
         this.Q2 = new HashMap<>();
+        this.performanceData = new ArrayList<>();
     }
 
     public String formulateState(MarioForwardModel model) {
@@ -799,6 +809,18 @@ public class Agent implements MarioAgent {
 
         this.prevAction = nextAction;
         this.prevState = state;
+
+        String[] data = new String[3];
+
+        data[0] = String.valueOf(model.getCompletionPercentage());
+        data[1] = model.getGameStatus().toString();
+        data[2] = String.valueOf(((double)(400000 - model.getRemainingTime())/1000));
+
+        episodeData.add(data);
+
+        if (model.getGameStatus().equals(GameStatus.LOSE) || model.getGameStatus().equals(GameStatus.TIME_OUT) || model.getGameStatus().equals(GameStatus.WIN)) {
+            performanceData.add(episodeData);
+        }
 
         return ACTION_MAP[nextAction].clone();
     }
