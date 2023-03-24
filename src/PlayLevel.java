@@ -1,10 +1,12 @@
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Map;
+import java.util.ArrayList;
 
 import agents.superMarioRL.Agent;
-import engine.core.MarioAgent;
+import com.opencsv.CSVWriter;
 import engine.core.MarioGame;
 import engine.core.MarioResult;
 
@@ -37,7 +39,7 @@ public class PlayLevel {
         return content;
     }
 
-    public static void train(String level) {
+    public static void train(String level) throws IOException {
         MarioGame game = new MarioGame();
 
         for (int i=0; i<runs;i++) {
@@ -45,16 +47,31 @@ public class PlayLevel {
             Agent agent = new agents.superMarioRL.Agent();
             setupAgentAndGame(agent, game, "doubleqlearning", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
-
-                if (j%2500 == 0) {
-                    agent.setSelection("epsilongreedytest");
-                    game.setupVisuals(4);
-                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 30, 4));
-                    agent.setSelection("epsilongreedy");
-                }
-                agent.initializeEpisode();
+//                if (j%2500 == 0) {
+//                    agent.setSelection("epsilongreedytest");
+//                    game.setupVisuals(4);
+//                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 30, 4));
+//                    agent.setSelection("epsilongreedy");
+//                }
                 System.out.println("Episode: " + (j+1));
-                game.runGame(agent, getLevel(level), 0, 0, false, 0, 4);
+                game.runGame(agent, getLevel(level), 400, 0, false, 0, 4);
+            }
+            ArrayList<String[]> data = agent.getPerformanceData();
+            try {
+                File myObj = new File("./data/doubleqlearning_run"+(i+1)+".csv");
+                if (myObj.createNewFile()) {
+                    System.out.println("File created: " + myObj.getName());
+                } else {
+                    System.out.println("File already exists.");
+                }
+            } catch (IOException e) {
+                System.out.println("An error occurred.");
+                e.printStackTrace();
+            }
+            try (CSVWriter writer = new CSVWriter(new FileWriter("./data/doubleqlearning_run"+(i+1)+".csv"))) {
+                for (String[] episode: data) {
+                    writer.writeNext(episode);
+                }
             }
         }
 
@@ -65,7 +82,7 @@ public class PlayLevel {
         agent.setupAgent();
         game.setAgent(agent);
     }
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
 //        MarioGame game = new MarioGame();
 //        Agent agent = new agents.superMarioRL.Agent();
 //        setupAgentAndGame(agent, game, "qlearning", "epsilongreedy");

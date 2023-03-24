@@ -174,9 +174,7 @@ public class Agent implements MarioAgent {
 
     public double bestProgress = 0;
 
-    public ArrayList<ArrayList<String[]>> performanceData;
-
-    public ArrayList<String[]> episodeData;
+    public ArrayList<String[]> performanceData;
 
     /*
 
@@ -233,11 +231,10 @@ public class Agent implements MarioAgent {
         this.elimByStomp = 0;
         this.elimByFire = 0;
         this.bestProgress = percentCompleted;
-        this.performanceData = new ArrayList<>();
     }
 
-    public void initializeEpisode() {
-        this.episodeData = new ArrayList<>();
+    public ArrayList<String[]> getPerformanceData() {
+        return this.performanceData;
     }
 
     private String velocityRepresentation(float[] velocity) {
@@ -779,11 +776,6 @@ public class Agent implements MarioAgent {
 
     @Override
     public boolean[] getActions(MarioForwardModel model, MarioTimer timer) {
-
-        if (model.getCompletionPercentage() > 0.355) {
-            System.out.println(model.getCompletionPercentage() + " PASSED THE PIPES");
-        }
-
         String state = formulateState(model);
         double reward = computeReward(model);
         int nextAction = getNextAction(state);
@@ -810,18 +802,13 @@ public class Agent implements MarioAgent {
         this.prevAction = nextAction;
         this.prevState = state;
 
-        String[] data = new String[3];
-
-        data[0] = String.valueOf(model.getCompletionPercentage());
-        data[1] = model.getGameStatus().toString();
-        data[2] = String.valueOf(((double)(400000 - model.getRemainingTime())/1000));
-
-        episodeData.add(data);
-
-        if (model.getGameStatus().equals(GameStatus.LOSE) || model.getGameStatus().equals(GameStatus.TIME_OUT) || model.getGameStatus().equals(GameStatus.WIN)) {
-            performanceData.add(episodeData);
+        if (!model.getGameStatus().equals(GameStatus.RUNNING)) {
+            String[] data = new String[3];
+            data[0] = String.valueOf(model.getCompletionPercentage());
+            data[1] = model.getGameStatus().toString();
+            data[2] = String.valueOf(((double)(400000 - model.getRemainingTime())/1000));
+            performanceData.add(data);
         }
-
         return ACTION_MAP[nextAction].clone();
     }
 
