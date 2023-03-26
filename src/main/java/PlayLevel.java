@@ -45,12 +45,12 @@ public class PlayLevel {
         for (int i=0; i<runs;i++) {
 
             Agent agent = new agents.superMarioRL.Agent();
-            setupAgentAndGame(agent, game, "doubleqlearning", "epsilongreedy");
+            setupAgentAndGame(agent, game, "dqn", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
                 if (j%2500 == 0) {
                     agent.setSelection("epsilongreedytest");
                     game.setupVisuals(4);
-                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 30, 4));
+                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 0, 4));
                     agent.setSelection("epsilongreedy");
                 }
                 System.out.println("Episode: " + (j+1));

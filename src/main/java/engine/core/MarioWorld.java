@@ -2,6 +2,8 @@ package engine.core;
 
 import java.awt.Graphics;
 import java.awt.GraphicsConfiguration;
+import java.awt.image.BufferedImage;
+import java.awt.image.VolatileImage;
 import java.util.ArrayList;
 
 import engine.effects.*;
@@ -27,6 +29,8 @@ public class MarioWorld {
     public int coins, lives;
     public ArrayList<MarioEvent> lastFrameEvents;
 
+    public BufferedImage image;
+
     private MarioEvent[] killEvents;
     private ArrayList<MarioSprite> sprites;
     private ArrayList<Shell> shellsToCheck;
@@ -37,6 +41,7 @@ public class MarioWorld {
     private ArrayList<MarioEffect> effects;
 
     private MarioBackground[] backgrounds = new MarioBackground[2];
+
 
     public MarioWorld(MarioEvent[] killEvents) {
         this.pauseTimer = 0;
@@ -116,6 +121,7 @@ public class MarioWorld {
         world.currentTimer = this.currentTimer;
         world.currentTick = this.currentTick;
         world.level = this.level.clone();
+        world.image = this.image;
         for (MarioSprite sprite : this.sprites) {
             MarioSprite cloneSprite = sprite.clone();
             cloneSprite.world = world;

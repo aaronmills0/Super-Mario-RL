@@ -1,5 +1,7 @@
 package engine.core;
 
+import java.awt.image.BufferedImage;
+import java.awt.image.VolatileImage;
 import java.util.ArrayList;
 
 import engine.helper.EventType;
@@ -639,5 +641,9 @@ public class MarioForwardModel {
      */
     public int[][] getMarioSceneObservation(int detail) {
         return this.world.getSceneObservation(this.world.mario.x, this.world.mario.y, detail);
+    }
+
+    public BufferedImage getImage() {
+        return this.world.image;
     }
 }

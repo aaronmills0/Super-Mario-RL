@@ -261,6 +261,9 @@ public class MarioGame {
             if (!this.pause) {
                 //get actions
                 agentTimer = new MarioTimer(MarioGame.maxTime);
+                if (visual) {
+                    this.world.image = renderTarget.getSnapshot();
+                }
                 boolean[] actions = this.agent.getActions(new MarioForwardModel(this.world.clone()), agentTimer);
                 if (MarioGame.verbose) {
                     if (agentTimer.getRemainingTime() < 0 && Math.abs(agentTimer.getRemainingTime()) > MarioGame.graceTime) {

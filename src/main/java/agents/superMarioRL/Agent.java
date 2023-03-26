@@ -7,6 +7,7 @@ import engine.helper.GameStatus;
 import engine.helper.MarioActions;
 import engine.sprites.Mario;
 
+import java.awt.image.VolatileImage;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -154,22 +155,21 @@ public class Agent implements MarioAgent {
     private final int NEARBY_RADIUS = 3;
     private final int MIDRANGE_RADIUS = 7;
     private final int FARRANGE_RADIUS = 11;
-    private final int PROGRESS_REWARD_MULTIPLIER = 1000;
+    public static final int PROGRESS_REWARD_MULTIPLIER = 1000;
     private final int ELEVATED_REWARD = 1;
-    private final int WIN_REWARD = 500;
+    public static final int WIN_REWARD = 500;
 
-    private final int LOSE_PENALTY = 25;
-    private final int ELIM_REWARD = 1;
+    public static final int LOSE_PENALTY = 25;
+    private static final int ELIM_REWARD = 1;
     private final int COLLISION_PENALTY = 5;
-    private final double EPSILON = 0.3;
-    private final double GAMMA = 0.6;
+    public static final double EPSILON = 0.3;
+    public static final double GAMMA = 0.6;
     private final double ALPHA = 0.15;
-    private final int ACTION_SPACE = 14;
+    public static final int ACTION_SPACE = 14;
     private int time = 0;
-
     private int elevation = 0;
 
-    private final double TIME_MULTIPLIER = 0.5;
+    public static final double TIME_MULTIPLIER = 0.5;
     public static boolean onTile = true;
 
     public double bestProgress = 0;
@@ -194,7 +194,7 @@ public class Agent implements MarioAgent {
      * (NONE, JUMP, NOSPEED) : [false, false, false, false, true]
 
      */
-    private final boolean[][] ACTION_MAP = {
+    public static final boolean[][] ACTION_MAP = {
             {false, true, false, true, false},
             {false, true, false, false, false},
             {false, true, false, true, true},
@@ -217,6 +217,8 @@ public class Agent implements MarioAgent {
 
     private static final int CANVAS_MAX = 15;
     private static final int CANVAS_MIN = 0;
+
+    private DQN dqn;
 
     public void setAlgorithm(String algorithm) {
         this.algorithm = algorithm;
@@ -776,6 +778,12 @@ public class Agent implements MarioAgent {
 
     @Override
     public boolean[] getActions(MarioForwardModel model, MarioTimer timer) {
+        if (this.algorithm.equals("dqn")) {
+            if (this.dqn == null) {
+                this.dqn = new DQN(this.selection);
+            }
+            return dqn.getActions(model, timer);
+        }
         String state = formulateState(model);
         double reward = computeReward(model);
         int nextAction = getNextAction(state);
