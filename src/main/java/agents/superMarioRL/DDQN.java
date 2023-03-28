@@ -4,35 +4,20 @@ import engine.core.MarioAgent;
 import engine.core.MarioForwardModel;
 import engine.core.MarioTimer;
 import engine.helper.GameStatus;
-import org.datavec.api.records.Buffer;
-import org.datavec.api.records.reader.RecordReader;
 import org.datavec.image.loader.NativeImageLoader;
-import org.datavec.image.recordreader.ImageRecordReader;
-import org.deeplearning4j.datasets.datavec.RecordReaderDataSetIterator;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.BackpropType;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
-import org.deeplearning4j.nn.conf.Updater;
 import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.layers.ConvolutionLayer;
 import org.deeplearning4j.nn.conf.layers.DenseLayer;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.conf.layers.SubsamplingLayer;
-import org.deeplearning4j.nn.gradient.DefaultGradient;
-import org.deeplearning4j.nn.gradient.Gradient;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
-import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
-import org.nd4j.linalg.cpu.nativecpu.NDArray;
-import org.nd4j.linalg.cpu.nativecpu.bindings.Nd4jCpu;
-import org.nd4j.linalg.dataset.DataSet;
-import org.nd4j.linalg.dataset.api.iterator.BaseDatasetIterator;
-import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
-import org.nd4j.linalg.dataset.api.iterator.fetcher.BaseDataFetcher;
-import org.nd4j.linalg.dataset.api.iterator.fetcher.DataSetFetcher;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.INDArrayIndex;
 import org.nd4j.linalg.indexing.NDArrayIndex;
@@ -40,15 +25,13 @@ import org.nd4j.linalg.indexing.SpecifiedIndex;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
+import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.lang.reflect.Array;
-import java.net.IDN;
 import java.util.*;
-import java.util.List;
 
-public class DQN implements MarioAgent {
+public class DDQN implements MarioAgent {
 
     private ReplayBuffer replayBuffer;
 
@@ -67,23 +50,27 @@ public class DQN implements MarioAgent {
 
     private static int seed = 2345870;
 
-    private static final int IMAGE_HEIGHT = 256;
+    private static final int SOURCE_IMAGE_HEIGHT = 256;
 
-    private static final int IMAGE_WIDTH = 256;
+    private static final int SOURCE_IMAGE_WIDTH = 256;
+
+    private static final int IMAGE_HEIGHT = 84;
+
+    private static final int IMAGE_WIDTH = 84;
 
     private static final int CHANNELS = 4;
 
-    private static final int BATCH_SIZE = 16;
+    private static final int BATCH_SIZE = 64;
 
-    private static final int TRAIN_DELAY = 32; // number of steps between updates to the qNetwork
+    private static final int TRAIN_DELAY = 128; // number of steps between updates to the qNetwork
 
     private static int trainCounter = 0;
 
-    private static final int UPDATE_DELAY = 32; // number of steps between the target networks params being updated to those of the q network
+    private static final int UPDATE_DELAY = 128; // number of steps between the target networks params being updated to those of the q network
 
     private static int updateCounter = 0;
 
-    private static final int BUFFER_CAPACITY = 1024;
+    private static final int BUFFER_CAPACITY = 512;
     private NativeImageLoader loader;
 
     private String selection;
@@ -94,7 +81,7 @@ public class DQN implements MarioAgent {
 
     public ArrayList<String[]> performanceData;
 
-    public DQN(String selection) {
+    public DDQN(String selection) {
         this.replayBuffer = new ReplayBuffer();
         this.prevState = null;
         this.networkConfig = createConvModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
@@ -133,19 +120,19 @@ public class DQN implements MarioAgent {
                 .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                 .updater(new Sgd(0.05))
                 .list()
-                .layer(0, new ConvolutionLayer.Builder() // 256x256x4 -> 256x256x16
+                .layer(0, new ConvolutionLayer.Builder() // 84x84x4 -> 80x80x16
                         .nIn(4)
                         .nOut(16)
-                        .kernelSize(3, 3)
+                        .kernelSize(5, 5)
                         .stride(1, 1)
-                        .padding(1, 1)
+                        .padding(0, 0)
                         .activation(Activation.RELU)
                         .build())
-                .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 256x256x16 -> 64x64x16
-                        .kernelSize(4,4)
-                        .stride(4,4)
+                .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 80x80x16 -> 8x8x16
+                        .kernelSize(10,10)
+                        .stride(10,10)
                         .build())
-                .layer(2, new ConvolutionLayer.Builder() // 64x64x16 -> 64x64x32
+                .layer(2, new ConvolutionLayer.Builder() // 8x8x16 -> 8x8x32
                         .nIn(16)
                         .nOut(32)
                         .kernelSize(3, 3)
@@ -153,22 +140,25 @@ public class DQN implements MarioAgent {
                         .padding(1, 1)
                         .activation(Activation.RELU)
                         .build())
-                .layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 64x64x32 -> 16x16x32
-                        .kernelSize(4,4)
-                        .stride(4,4)
+                .layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 8x8x32 -> 4x4x32
+                        .kernelSize(2,2)
+                        .stride(2,2)
+                        .build())
+                .layer(4, new ConvolutionLayer.Builder() // 4x4x32 -> 4x4x32
+                        .nIn(32)
+                        .nOut(32)
+                        .kernelSize(3, 3)
+                        .stride(1, 1)
+                        .padding(1, 1)
+                        .activation(Activation.RELU)
                         .build())
                 .layer(4, new DenseLayer.Builder()
-                        .nIn(8192)
-                        .nOut(1024)
+                        .nIn(512)
+                        .nOut(256)
                         .activation(Activation.RELU)
                         .build())
-                .layer(5, new DenseLayer.Builder()
-                        .nIn(1024)
-                        .nOut(64)
-                        .activation(Activation.RELU)
-                        .build())
-                .layer(6, new OutputLayer.Builder()
-                        .nIn(64)
+                .layer(5, new OutputLayer.Builder()
+                        .nIn(256)
                         .nOut(numActions)
                         .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
                         .build())
@@ -192,6 +182,7 @@ public class DQN implements MarioAgent {
         LinkedList<Double> rewards = samples.getRewardBuffer();
         double[][] qOutputs = new double[BATCH_SIZE][Agent.ACTION_SPACE];
         double[] targetOutputs = new double[BATCH_SIZE];
+        int[] argmax = new int[BATCH_SIZE];
         //** Check if this getDouble() actually works
         LinkedList<INDArray> nextStates = samples.getNextStateBuffer();
         int i = 0;
@@ -200,10 +191,24 @@ public class DQN implements MarioAgent {
             i++;
         }
         i = 0;
+        for (INDArray nextState : nextStates) {
+            double[] output = this.qNetwork.output(nextState).toDoubleVector();
+            int maxIndex = 0;
+            double maxValue = output[0];
+            for (int j=1;j<output.length;j++) {
+                if (output[j] > maxValue) {
+                    maxValue = output[j];
+                    maxIndex = j;
+                }
+            }
+            argmax[i] = maxIndex;
+            i++;
+        }
+        i = 0;
         Iterator<Double> rewardsIter = rewards.iterator();
         Iterator<INDArray> nextStatesIter = nextStates.iterator();
         while (rewardsIter.hasNext()) {
-            targetOutputs[i] = rewardsIter.next() +  gamma*max(this.targetNetwork.output(nextStatesIter.next()).get().toDoubleVector());
+            targetOutputs[i] = rewardsIter.next() +  gamma*this.targetNetwork.output(nextStatesIter.next()).get().toDoubleVector()[argmax[i]];
             i++;
         }
         i = 0;
@@ -253,27 +258,41 @@ public class DQN implements MarioAgent {
         // Loss is computed: L = MSE(q, r + gamma*q') = sum{(q - (r + gamma*q'))^2}/batch_size
 
         BufferedImage image = new BufferedImage(IMAGE_WIDTH, IMAGE_HEIGHT, BufferedImage.TYPE_BYTE_GRAY);
+
+        // Convert to grayscale and re-size: 256x256 -> 84x84
         long frameTime = System.currentTimeMillis();
         Graphics g = image.getGraphics();
-        g.drawImage(model.getImage(), 0, 0, null);
+        g.drawImage(model.getImage(), 0, 0, IMAGE_WIDTH, IMAGE_HEIGHT, null);
         g.dispose();
+
+//        new JFrame("gray") {
+//            {
+//                final JLabel label = new JLabel("", new ImageIcon(image), 0);
+//                add(label);
+//                pack();
+//                setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+//                setVisible(true);
+//            }
+//        };
+
+
+
         long grayTime = System.currentTimeMillis();
-        INDArray colourFrame = Nd4j.empty();
+        INDArray frame = Nd4j.empty();
         try {
-            colourFrame = loader.asMatrix(image);
+            frame = loader.asMatrix(image);
         } catch (IOException e) {
             System.out.println("Failed to convert BufferedImage to Matrix");
             e.printStackTrace();
         }
         // The matrix is 4 x 256 x 256 -> 4 channels  alpha, r, g, b. Ignore the alpha channel
-        long[] shape = colourFrame.shape();
-        colourFrame = colourFrame.reshape(shape[1], shape[2], shape[3]);
-        INDArray frame = Nd4j.zeros(shape[2], shape[3]);
+        long[] shape = frame.shape();
+        frame = frame.reshape(shape[1], shape[2], shape[3]);
         INDArrayIndex[] indices = {
                 new SpecifiedIndex(1),
               NDArrayIndex.all(),
         };
-        frame = colourFrame.get(indices);
+        frame = frame.get(indices);
         boolean[] action;
         this.replayBuffer.addContext(frame);
         int nextActionIndex;

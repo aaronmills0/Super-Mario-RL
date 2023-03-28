@@ -4,35 +4,20 @@ import engine.core.MarioAgent;
 import engine.core.MarioForwardModel;
 import engine.core.MarioTimer;
 import engine.helper.GameStatus;
-import org.datavec.api.records.Buffer;
-import org.datavec.api.records.reader.RecordReader;
 import org.datavec.image.loader.NativeImageLoader;
-import org.datavec.image.recordreader.ImageRecordReader;
-import org.deeplearning4j.datasets.datavec.RecordReaderDataSetIterator;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.BackpropType;
 import org.deeplearning4j.nn.conf.MultiLayerConfiguration;
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration;
-import org.deeplearning4j.nn.conf.Updater;
 import org.deeplearning4j.nn.conf.inputs.InputType;
 import org.deeplearning4j.nn.conf.layers.ConvolutionLayer;
 import org.deeplearning4j.nn.conf.layers.DenseLayer;
 import org.deeplearning4j.nn.conf.layers.OutputLayer;
 import org.deeplearning4j.nn.conf.layers.SubsamplingLayer;
-import org.deeplearning4j.nn.gradient.DefaultGradient;
-import org.deeplearning4j.nn.gradient.Gradient;
 import org.deeplearning4j.nn.multilayer.MultiLayerNetwork;
 import org.deeplearning4j.nn.weights.WeightInit;
-import org.deeplearning4j.nn.workspace.LayerWorkspaceMgr;
 import org.nd4j.linalg.activations.Activation;
 import org.nd4j.linalg.api.ndarray.INDArray;
-import org.nd4j.linalg.cpu.nativecpu.NDArray;
-import org.nd4j.linalg.cpu.nativecpu.bindings.Nd4jCpu;
-import org.nd4j.linalg.dataset.DataSet;
-import org.nd4j.linalg.dataset.api.iterator.BaseDatasetIterator;
-import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
-import org.nd4j.linalg.dataset.api.iterator.fetcher.BaseDataFetcher;
-import org.nd4j.linalg.dataset.api.iterator.fetcher.DataSetFetcher;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.indexing.INDArrayIndex;
 import org.nd4j.linalg.indexing.NDArrayIndex;
@@ -40,15 +25,9 @@ import org.nd4j.linalg.indexing.SpecifiedIndex;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
-import java.awt.*;
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.lang.reflect.Array;
-import java.net.IDN;
 import java.util.*;
-import java.util.List;
 
-public class DQN implements MarioAgent {
+public class DDQNLite implements MarioAgent {
 
     private ReplayBuffer replayBuffer;
 
@@ -65,21 +44,25 @@ public class DQN implements MarioAgent {
 
     private int time = 0;
 
+    private int elevation = 0;
+
+    public static boolean onTile = true;
+
     private static int seed = 2345870;
 
-    private static final int IMAGE_HEIGHT = 256;
+    private static final int IMAGE_HEIGHT = 16;
 
-    private static final int IMAGE_WIDTH = 256;
+    private static final int IMAGE_WIDTH = 16;
 
     private static final int CHANNELS = 4;
 
-    private static final int BATCH_SIZE = 16;
+    private static final int BATCH_SIZE = 32;
 
-    private static final int TRAIN_DELAY = 32; // number of steps between updates to the qNetwork
+    private static final int TRAIN_DELAY = 64; // number of steps between updates to the qNetwork
 
     private static int trainCounter = 0;
 
-    private static final int UPDATE_DELAY = 32; // number of steps between the target networks params being updated to those of the q network
+    private static final int UPDATE_DELAY = 256; // number of steps between the target networks params being updated to those of the q network
 
     private static int updateCounter = 0;
 
@@ -92,37 +75,64 @@ public class DQN implements MarioAgent {
 
     private int elimByFire = 0;
 
+    public double bestProgress = 0;
+
     public ArrayList<String[]> performanceData;
 
-    public DQN(String selection) {
+    public int gapSize = 0;
+
+    public static final int GAP_REWARD = 1;
+
+    public DDQNLite(String selection) {
         this.replayBuffer = new ReplayBuffer();
         this.prevState = null;
-        this.networkConfig = createConvModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
+//        this.networkConfig = createConvModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
+        this.networkConfig = createNNModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
         this.qNetwork = new MultiLayerNetwork(this.networkConfig);
         this.targetNetwork = new MultiLayerNetwork(this.networkConfig);
         this.qNetwork.init();
         this.targetNetwork.init();
         this.loader = new NativeImageLoader(IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS);
         this.selection = selection;
+        this.performanceData = new ArrayList<>();
     }
     @Override
     public void initialize(MarioForwardModel model, MarioTimer timer) {
         resetProgress(model);
     }
 
+    public void resetPerformanceData() {
+        this.performanceData = new ArrayList<>();
+    }
     public void resetProgress(MarioForwardModel model) {
         this.percentCompleted = model.getCompletionPercentage();
         this.elimByStomp = 0;
         this.elimByFire = 0;
         this.time = model.getRemainingTime();
+        this.bestProgress = percentCompleted;
+        this.elevation = model.getMarioScreenTilePos()[1];
+        this.gapSize = 0;
     }
 
     public ArrayList<String[]> getPerformanceData() {
         return this.performanceData;
     }
 
-    public void resetPerformanceData() {
-        this.performanceData = new ArrayList<>();
+    public void updateOnTile(int[] marioPos, int[][] tiles) {
+        if (marioPos[1] < Agent.CANVAS_MAX && tiles[marioPos[0]][marioPos[1]+1] > 0) {
+            onTile = true;
+        } else {
+            onTile = false;
+        }
+    }
+
+    public boolean updateOverGap(int[] marioPos, int[][] tiles) {
+        for (int i=marioPos[1]+1; i<Agent.CANVAS_MAX; i++) {
+            if (tiles[marioPos[0]][i] > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public MultiLayerConfiguration createConvModel(int seed, int height, int width, int channels, int numActions) {
@@ -133,37 +143,69 @@ public class DQN implements MarioAgent {
                 .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
                 .updater(new Sgd(0.05))
                 .list()
-                .layer(0, new ConvolutionLayer.Builder() // 256x256x4 -> 256x256x16
+                .layer(0, new ConvolutionLayer.Builder() // 16x16x4 -> 16x16x8
                         .nIn(4)
-                        .nOut(16)
+                        .nOut(8)
                         .kernelSize(3, 3)
                         .stride(1, 1)
                         .padding(1, 1)
                         .activation(Activation.RELU)
                         .build())
-                .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 256x256x16 -> 64x64x16
+                .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 16x16x8 -> 4x4x8
                         .kernelSize(4,4)
                         .stride(4,4)
                         .build())
-                .layer(2, new ConvolutionLayer.Builder() // 64x64x16 -> 64x64x32
-                        .nIn(16)
-                        .nOut(32)
-                        .kernelSize(3, 3)
-                        .stride(1, 1)
-                        .padding(1, 1)
+                .layer(2, new DenseLayer.Builder()
+                        .nIn(128)
+                        .nOut(64)
                         .activation(Activation.RELU)
                         .build())
-                .layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 64x64x32 -> 16x16x32
-                        .kernelSize(4,4)
-                        .stride(4,4)
+                .layer(3, new OutputLayer.Builder()
+                        .nIn(64)
+                        .nOut(numActions)
+                        .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
+                        .build())
+                .backpropType(BackpropType.Standard)
+                .setInputType(InputType.convolutional(height, width, channels))
+                .build();
+        return conf;
+    }
+
+    public MultiLayerConfiguration createNNModel(int seed, int height, int width, int channels, int numActions) {
+        MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
+                .seed(seed)
+                .activation(Activation.RELU)
+                .weightInit(WeightInit.XAVIER)
+                .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
+                .updater(new Sgd(0.1))
+                .list()
+                .layer(0, new DenseLayer.Builder()
+                        .nIn(1024)
+                        .nOut(768)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(1, new DenseLayer.Builder()
+                        .nIn(768)
+                        .nOut(576)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(2, new DenseLayer.Builder()
+                        .nIn(576)
+                        .nOut(432)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(3, new DenseLayer.Builder()
+                        .nIn(432)
+                        .nOut(324)
+                        .activation(Activation.RELU)
                         .build())
                 .layer(4, new DenseLayer.Builder()
-                        .nIn(8192)
-                        .nOut(1024)
+                        .nIn(324)
+                        .nOut(243)
                         .activation(Activation.RELU)
                         .build())
                 .layer(5, new DenseLayer.Builder()
-                        .nIn(1024)
+                        .nIn(243)
                         .nOut(64)
                         .activation(Activation.RELU)
                         .build())
@@ -172,7 +214,6 @@ public class DQN implements MarioAgent {
                         .nOut(numActions)
                         .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
                         .build())
-
                 .backpropType(BackpropType.Standard)
                 .setInputType(InputType.convolutional(height, width, channels))
                 .build();
@@ -191,6 +232,7 @@ public class DQN implements MarioAgent {
         LinkedList<Integer> actions = samples.getActionBuffer();
         LinkedList<Double> rewards = samples.getRewardBuffer();
         double[][] qOutputs = new double[BATCH_SIZE][Agent.ACTION_SPACE];
+        int[] argmax = new int[BATCH_SIZE];
         double[] targetOutputs = new double[BATCH_SIZE];
         //** Check if this getDouble() actually works
         LinkedList<INDArray> nextStates = samples.getNextStateBuffer();
@@ -200,10 +242,24 @@ public class DQN implements MarioAgent {
             i++;
         }
         i = 0;
+        for (INDArray nextState : nextStates) {
+            double[] output = this.qNetwork.output(nextState).toDoubleVector();
+            int maxIndex = 0;
+            double maxValue = output[0];
+            for (int j=1;j<output.length;j++) {
+                if (output[j] > maxValue) {
+                    maxValue = output[j];
+                    maxIndex = j;
+                }
+            }
+            argmax[i] = maxIndex;
+            i++;
+        }
+        i = 0;
         Iterator<Double> rewardsIter = rewards.iterator();
         Iterator<INDArray> nextStatesIter = nextStates.iterator();
         while (rewardsIter.hasNext()) {
-            targetOutputs[i] = rewardsIter.next() +  gamma*max(this.targetNetwork.output(nextStatesIter.next()).get().toDoubleVector());
+            targetOutputs[i] = rewardsIter.next() +  gamma*this.targetNetwork.output(nextStatesIter.next()).get().toDoubleVector()[argmax[i]];
             i++;
         }
         i = 0;
@@ -252,28 +308,15 @@ public class DQN implements MarioAgent {
 
         // Loss is computed: L = MSE(q, r + gamma*q') = sum{(q - (r + gamma*q'))^2}/batch_size
 
-        BufferedImage image = new BufferedImage(IMAGE_WIDTH, IMAGE_HEIGHT, BufferedImage.TYPE_BYTE_GRAY);
-        long frameTime = System.currentTimeMillis();
-        Graphics g = image.getGraphics();
-        g.drawImage(model.getImage(), 0, 0, null);
-        g.dispose();
-        long grayTime = System.currentTimeMillis();
-        INDArray colourFrame = Nd4j.empty();
-        try {
-            colourFrame = loader.asMatrix(image);
-        } catch (IOException e) {
-            System.out.println("Failed to convert BufferedImage to Matrix");
-            e.printStackTrace();
-        }
+
         // The matrix is 4 x 256 x 256 -> 4 channels  alpha, r, g, b. Ignore the alpha channel
-        long[] shape = colourFrame.shape();
-        colourFrame = colourFrame.reshape(shape[1], shape[2], shape[3]);
-        INDArray frame = Nd4j.zeros(shape[2], shape[3]);
-        INDArrayIndex[] indices = {
-                new SpecifiedIndex(1),
-              NDArrayIndex.all(),
-        };
-        frame = colourFrame.get(indices);
+        if (Agent.selection.equals("epsilongreedytest")) {
+            int[][] scene = model.getMarioCompleteObservation();
+            for (int i=0;i<scene.length;i++) {
+                System.out.println(Arrays.toString(scene[i]));
+            }
+        }
+        INDArray frame = Nd4j.create(model.getMarioCompleteObservation());
         boolean[] action;
         this.replayBuffer.addContext(frame);
         int nextActionIndex;
@@ -304,6 +347,11 @@ public class DQN implements MarioAgent {
 
         long actionSelectionTime = System.currentTimeMillis();
 
+        // Update whether mario is on the ground
+        updateOnTile(model.getMarioScreenTilePos(), model.getScreenSceneObservation());
+         if (updateOverGap(model.getMarioScreenTilePos(), model.getScreenSceneObservation())) {
+
+         }
         // Compute the reward
         double reward = computeReward(model);
         System.out.println("Reward: " + reward);
@@ -326,8 +374,6 @@ public class DQN implements MarioAgent {
         }
         long updateTime = System.currentTimeMillis();
 
-        long gray = grayTime - frameTime;
-        long replay = replayBufferTime - grayTime;
         long stateTime = nextStateTime - replayBufferTime;
         long feedForward = feedForwardTime - nextStateTime;
         long trainTime = trainEndTime - trainStartTime;
@@ -414,6 +460,29 @@ public class DQN implements MarioAgent {
 
         reward += deltaT;
 
+        double elevationReward = 0;
+        double gapReward = 0;
+//        if (this.selection.equals("epsilongreedytest")) {
+//            System.out.println("GROUND: "+ model.isMarioOnGround() + " " + marioPos[1]);
+//        }
+        if (this.onTile && progress > this.bestProgress) {
+            if (model.getMarioScreenTilePos()[1] < this.elevation) {
+                elevationReward += Math.pow(this.elevation - model.getMarioScreenTilePos()[1], 2);
+                if (this.selection.equals("epsilongreedytest")) {
+                    System.out.println("ELEVATION REWARD: " + elevationReward + " " + model.getMarioScreenTilePos()[1] + " " + this.elevation);
+                }
+            }
+            this.elevation = model.getMarioScreenTilePos()[1];
+            if (this.gapSize > 0) {
+                gapReward += this.gapSize;
+                this.gapSize = 0;
+            }
+        }
+
+
+        reward += Agent.ELEVATED_REWARD*elevationReward;
+        reward += GAP_REWARD*gapReward;
+
         int stompElim = 0;
         if (model.getKillsByStomp() > this.elimByStomp) {
             stompElim = model.getKillsByStomp() - this.elimByStomp;
@@ -436,6 +505,19 @@ public class DQN implements MarioAgent {
         } else if (model.getGameStatus().equals(GameStatus.LOSE)) {
             reward -= Agent.LOSE_PENALTY;
         }
+
+        if (progress > this.bestProgress) {
+            this.bestProgress = progress;
+        }
+
+        if (!model.getGameStatus().equals(GameStatus.RUNNING)) {
+            String[] data = new String[3];
+            data[0] = String.valueOf(model.getCompletionPercentage());
+            data[1] = model.getGameStatus().toString();
+            data[2] = String.valueOf(((double)(400000 - model.getRemainingTime())/1000));
+            performanceData.add(data);
+        }
+
         return reward;
     }
 

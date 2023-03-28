@@ -143,7 +143,7 @@ public class Agent implements MarioAgent {
 
     private String algorithm = "qlearning";
 
-    private String selection = "epsilongreedy";
+    public static String selection = "epsilongreedy";
 
     // Keep track of certain attributes to assist in computing reward and or state
     private double percentCompleted = 0.0;
@@ -156,13 +156,13 @@ public class Agent implements MarioAgent {
     private final int MIDRANGE_RADIUS = 7;
     private final int FARRANGE_RADIUS = 11;
     public static final int PROGRESS_REWARD_MULTIPLIER = 1000;
-    private final int ELEVATED_REWARD = 1;
+    public static final int ELEVATED_REWARD = 1;
     public static final int WIN_REWARD = 500;
 
     public static final int LOSE_PENALTY = 25;
-    private static final int ELIM_REWARD = 1;
+    public static final int ELIM_REWARD = 1;
     private final int COLLISION_PENALTY = 5;
-    public static final double EPSILON = 0.3;
+    public static double epsilon = 0.3;
     public static final double GAMMA = 0.6;
     private final double ALPHA = 0.15;
     public static final int ACTION_SPACE = 14;
@@ -215,10 +215,16 @@ public class Agent implements MarioAgent {
 
     public String prevState = null;
 
-    private static final int CANVAS_MAX = 15;
-    private static final int CANVAS_MIN = 0;
+    public static final int CANVAS_MAX = 15;
+    public static final int CANVAS_MIN = 0;
 
     private DQN dqn;
+
+    private DDQN ddqn;
+
+    private DQNLite dqnLite;
+
+    private DDQNLite ddqnLite;
 
     public void setAlgorithm(String algorithm) {
         this.algorithm = algorithm;
@@ -233,10 +239,25 @@ public class Agent implements MarioAgent {
         this.elimByStomp = 0;
         this.elimByFire = 0;
         this.bestProgress = percentCompleted;
+        this.time = model.getRemainingTime();
+        this.elevation = model.getMarioScreenTilePos()[1];
     }
 
     public ArrayList<String[]> getPerformanceData() {
+        if (this.algorithm.equals("dqn")) {
+            return this.dqn.getPerformanceData();
+        } else if (this.algorithm.equals("ddqn")) {
+            return this.ddqn.getPerformanceData();
+        } else if (this.algorithm.equals("dqnLite")) {
+            return this.dqnLite.getPerformanceData();
+        } else if (this.algorithm.equals("ddqnLite")) {
+            return this.ddqnLite.getPerformanceData();
+        }
         return this.performanceData;
+    }
+
+    public void setEpsilon(double epsilon) {
+        this.epsilon = epsilon;
     }
 
     private String velocityRepresentation(float[] velocity) {
@@ -544,13 +565,13 @@ public class Agent implements MarioAgent {
 
         double expectation = 0;
 
-        expectation += (1 - EPSILON + EPSILON/(double)ACTION_SPACE)*maxValue;
+        expectation += (1 - epsilon + epsilon/(double)ACTION_SPACE)*maxValue;
 
         for (int i=0; i<ACTION_SPACE; i++) {
             if (i == maxAction) {
                 continue;
             }
-            expectation += (EPSILON/(double)ACTION_SPACE)*nextStateActions[i];
+            expectation += (epsilon/(double)ACTION_SPACE)*nextStateActions[i];
         }
 
         Q.get(state)[action] = ALPHA*(reward + GAMMA*expectation - Q.get(state)[action]);
@@ -558,9 +579,29 @@ public class Agent implements MarioAgent {
 
     @Override
     public void initialize(MarioForwardModel model, MarioTimer timer) {
-        this.resetProgress(model);
-        this.time = model.getRemainingTime();
-        this.elevation = model.getMarioScreenTilePos()[1];
+        if (this.algorithm.equals("dqn")) {
+            if (this.dqn == null) {
+                this.dqn = new DQN(selection);
+            }
+            this.dqn.resetProgress(model);
+        } else if (this.algorithm.equals("ddqn")) {
+            if (this.ddqn == null) {
+                this.ddqn = new DDQN(selection);
+            }
+            this.ddqn.resetProgress(model);
+        } else if (this.algorithm.equals("dqnLite")) {
+            if (this.dqnLite == null) {
+                this.dqnLite = new DQNLite(selection);
+            }
+            this.dqnLite.resetProgress(model);
+        } else if (this.algorithm.equals("ddqnLite")){
+            if (this.ddqnLite == null) {
+                this.ddqnLite = new DDQNLite(selection);
+            }
+            this.ddqnLite.resetProgress(model);
+        }else {
+            this.resetProgress(model);
+        }
     }
 
     public void setupAgent() {
@@ -573,6 +614,18 @@ public class Agent implements MarioAgent {
         this.Q = new HashMap<>();
         this.Q2 = new HashMap<>();
         this.performanceData = new ArrayList<>();
+        if (this.dqn != null) {
+            this.dqn.resetPerformanceData();
+        }
+        if (this.ddqn != null) {
+            this.ddqn.resetPerformanceData();
+        }
+        if (this.dqnLite != null) {
+            this.dqnLite.resetPerformanceData();
+        }
+        if (this.ddqnLite != null) {
+            this.ddqnLite.resetPerformanceData();
+        }
     }
 
     public String formulateState(MarioForwardModel model) {
@@ -675,8 +728,7 @@ public class Agent implements MarioAgent {
 
         // 12. Obstacles: Indicates whether there exists obstacles in the 4 tiles in front of Mario.
 
-        int[][] tiles = model.getMarioSceneObservation();
-        tiles = model.getScreenSceneObservation();
+        int[][] tiles = model.getScreenSceneObservation();
 
         String obstaclesResult = obstaclesAround(marioPos, tiles);
         state.append(obstaclesResult);
@@ -762,14 +814,16 @@ public class Agent implements MarioAgent {
         } else if (model.getGameStatus().equals(GameStatus.LOSE)) {
             reward -= LOSE_PENALTY;
         }
-        this.bestProgress = progress;
+        if (progress > this.bestProgress) {
+            this.bestProgress = progress;
+        }
         return reward;
     }
 
     public int getNextAction(String state) {
         int nextAction = 0;
         if (this.selection.equals("epsilongreedy") || this.selection.equals("epsilongreedytest")) {
-            nextAction = epsilonGreedySelection(state, EPSILON);
+            nextAction = epsilonGreedySelection(state, epsilon);
         } else if (this.selection.equals("greedy")) {
             nextAction = greedySelection(state);
         }
@@ -779,13 +833,17 @@ public class Agent implements MarioAgent {
     @Override
     public boolean[] getActions(MarioForwardModel model, MarioTimer timer) {
         if (this.algorithm.equals("dqn")) {
-            if (this.dqn == null) {
-                this.dqn = new DQN(this.selection);
-            }
             return dqn.getActions(model, timer);
+        } else if (this.algorithm.equals("ddqn")) {
+            return this.ddqn.getActions(model, timer);
+        } else if (this.algorithm.equals("dqnLite")) {
+            return dqnLite.getActions(model, timer);
+        } else if (this.algorithm.equals("ddqnLite")) {
+            return ddqnLite.getActions(model, timer);
         }
         String state = formulateState(model);
         double reward = computeReward(model);
+        System.out.println("Reward: " + reward);
         int nextAction = getNextAction(state);
 
 //        if (this.selection.equals("epsilongreedytest")) {

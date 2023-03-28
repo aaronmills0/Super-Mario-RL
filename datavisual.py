@@ -28,7 +28,7 @@ def csv_to_lists(path):
 
     return episodes, percent_completed, game_status, time_remaining
 
-ep, pc, gs, tr = csv_to_lists("data/doubleqlearning_run4.csv")
+ep, pc, gs, tr = csv_to_lists("data/dqnlite_run4.csv")
 
 X_Y_Spline = make_interp_spline(ep, pc)
 

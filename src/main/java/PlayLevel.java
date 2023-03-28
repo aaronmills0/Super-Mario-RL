@@ -13,7 +13,7 @@ import engine.core.MarioResult;
 public class PlayLevel {
 
     public static final int runs = 10;
-    public static final int episodes = 10000;
+    public static final int episodes = 5000;
     public static void printResults(MarioResult result) {
         System.out.println("****************************************************************");
         System.out.println("Game Status: " + result.getGameStatus().toString() +
@@ -45,21 +45,22 @@ public class PlayLevel {
         for (int i=0; i<runs;i++) {
 
             Agent agent = new agents.superMarioRL.Agent();
-            setupAgentAndGame(agent, game, "dqn", "epsilongreedy");
+            setupAgentAndGame(agent, game, "ddqn", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
-                if (j%2500 == 0) {
+//                agent.setEpsilon(0.3 - (double)i/(3*episodes));
+                if (j%10 == 0) {
                     agent.setSelection("epsilongreedytest");
                     game.setupVisuals(4);
                     printResults(game.runGame(agent, getLevel(level), 60, 0, true, 0, 4));
                     agent.setSelection("epsilongreedy");
                 }
                 System.out.println("Episode: " + (j+1));
-                game.runGame(agent, getLevel(level), 400, 0, false, 0, 4);
+                printResults(game.runGame(agent, getLevel(level), 400, 0, false, 0, 4));
             }
             if (save) {
                 ArrayList<String[]> data = agent.getPerformanceData();
                 try {
-                    File myObj = new File("./data/doubleqlearning_run" + (i + 1) + ".csv");
+                    File myObj = new File("./data/ddqn_run" + (i + 1) + ".csv");
                     if (myObj.createNewFile()) {
                         System.out.println("File created: " + myObj.getName());
                     } else {
@@ -69,7 +70,7 @@ public class PlayLevel {
                     System.out.println("An error occurred.");
                     e.printStackTrace();
                 }
-                try (CSVWriter writer = new CSVWriter(new FileWriter("./data/doubleqlearning_run" + (i + 1) + ".csv"))) {
+                try (CSVWriter writer = new CSVWriter(new FileWriter("./data/ddqn_run" + (i + 1) + ".csv"))) {
                     for (String[] episode : data) {
                         writer.writeNext(episode);
                     }
@@ -89,6 +90,6 @@ public class PlayLevel {
 //        Agent agent = new agents.superMarioRL.Agent();
 //        setupAgentAndGame(agent, game, "qlearning", "epsilongreedy");
 //        printResults(game.runGame(agent, getLevel("./levels/original/lvl-1.txt"), 20, 0, true, 30, 4));
-        train("./levels/original/lvl-1.txt", false);
+        train("./levels/original/lvl-1.txt", true);
     }
 }
