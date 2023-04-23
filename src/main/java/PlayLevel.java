@@ -12,8 +12,8 @@ import engine.core.MarioResult;
 
 public class PlayLevel {
 
-    public static final int runs = 10;
-    public static final int episodes = 5000;
+    public static final int runs = 1;
+    public static final int episodes = 50000;
     public static void printResults(MarioResult result) {
         System.out.println("****************************************************************");
         System.out.println("Game Status: " + result.getGameStatus().toString() +
@@ -47,20 +47,15 @@ public class PlayLevel {
             Agent agent = new agents.superMarioRL.Agent();
             setupAgentAndGame(agent, game, "ddqn", "epsilongreedy");
             for (int j=0; j<episodes; j++) {
-//                agent.setEpsilon(0.3 - (double)i/(3*episodes));
-                if (j%10 == 0) {
-                    agent.setSelection("epsilongreedytest");
-                    game.setupVisuals(4);
-                    printResults(game.runGame(agent, getLevel(level), 60, 0, true, 0, 4));
-                    agent.setSelection("epsilongreedy");
-                }
+                agent.setEpsilon(0.3 - 0.3*(double)i/episodes);
+                agent.setAlpha(0.2);
                 System.out.println("Episode: " + (j+1));
-                printResults(game.runGame(agent, getLevel(level), 400, 0, false, 0, 4));
+                printResults(game.runGame(agent, getLevel(level), 400, 0, true, 60, 2));
             }
             if (save) {
                 ArrayList<String[]> data = agent.getPerformanceData();
                 try {
-                    File myObj = new File("./data/ddqn_run" + (i + 1) + ".csv");
+                    File myObj = new File("./data/qlearning_run" + (i + 1) + ".csv");
                     if (myObj.createNewFile()) {
                         System.out.println("File created: " + myObj.getName());
                     } else {
@@ -70,7 +65,7 @@ public class PlayLevel {
                     System.out.println("An error occurred.");
                     e.printStackTrace();
                 }
-                try (CSVWriter writer = new CSVWriter(new FileWriter("./data/ddqn_run" + (i + 1) + ".csv"))) {
+                try (CSVWriter writer = new CSVWriter(new FileWriter("./data/qlearning_run" + (i + 1) + ".csv"))) {
                     for (String[] episode : data) {
                         writer.writeNext(episode);
                     }

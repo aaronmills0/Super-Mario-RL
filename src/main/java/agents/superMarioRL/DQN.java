@@ -73,7 +73,7 @@ public class DQN implements MarioAgent {
 
     private static final int CHANNELS = 4;
 
-    private static final int BATCH_SIZE = 16;
+    private static final int BATCH_SIZE = 1;
 
     private static final int TRAIN_DELAY = 32; // number of steps between updates to the qNetwork
 

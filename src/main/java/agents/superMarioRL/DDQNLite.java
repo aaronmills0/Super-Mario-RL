@@ -58,7 +58,7 @@ public class DDQNLite implements MarioAgent {
 
     private static final int BATCH_SIZE = 32;
 
-    private static final int TRAIN_DELAY = 64; // number of steps between updates to the qNetwork
+    private static final int TRAIN_DELAY = 128; // number of steps between updates to the qNetwork
 
     private static int trainCounter = 0;
 
@@ -66,7 +66,7 @@ public class DDQNLite implements MarioAgent {
 
     private static int updateCounter = 0;
 
-    private static final int BUFFER_CAPACITY = 1024;
+    private static final int BUFFER_CAPACITY = 2048;
     private NativeImageLoader loader;
 
     private String selection;
@@ -350,7 +350,7 @@ public class DDQNLite implements MarioAgent {
         // Update whether mario is on the ground
         updateOnTile(model.getMarioScreenTilePos(), model.getScreenSceneObservation());
          if (updateOverGap(model.getMarioScreenTilePos(), model.getScreenSceneObservation())) {
-
+            this.gapSize++;
          }
         // Compute the reward
         double reward = computeReward(model);

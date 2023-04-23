@@ -5,9 +5,7 @@ import engine.core.MarioForwardModel;
 import engine.core.MarioTimer;
 import engine.helper.GameStatus;
 import engine.helper.MarioActions;
-import engine.sprites.Mario;
 
-import java.awt.image.VolatileImage;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -164,7 +162,7 @@ public class Agent implements MarioAgent {
     private final int COLLISION_PENALTY = 5;
     public static double epsilon = 0.3;
     public static final double GAMMA = 0.6;
-    private final double ALPHA = 0.15;
+    private static double alpha = 0.3;
     public static final int ACTION_SPACE = 14;
     private int time = 0;
     private int elevation = 0;
@@ -222,6 +220,8 @@ public class Agent implements MarioAgent {
 
     private DDQN ddqn;
 
+    private PPO ppo;
+
     private DQNLite dqnLite;
 
     private DDQNLite ddqnLite;
@@ -252,12 +252,18 @@ public class Agent implements MarioAgent {
             return this.dqnLite.getPerformanceData();
         } else if (this.algorithm.equals("ddqnLite")) {
             return this.ddqnLite.getPerformanceData();
+        } else if (this.algorithm.equals("ppo")) {
+            return this.ppo.getPerformanceData();
         }
         return this.performanceData;
     }
 
     public void setEpsilon(double epsilon) {
         this.epsilon = epsilon;
+    }
+
+    public void setAlpha(double alpha) {
+        this.alpha = alpha;
     }
 
     private String velocityRepresentation(float[] velocity) {
@@ -283,29 +289,29 @@ public class Agent implements MarioAgent {
     }
 
     private String obstaclesAround(int[] marioPos, int[][] tiles) {
-        boolean[] obstacles = new boolean[11];
+        boolean[] obstacles = new boolean[5];
         Arrays.fill(obstacles, false);
         // [HIGHEST, HIGH, LOW, LOWEST]
         int posX = marioPos[0] + 1;
         int posY = marioPos[1];
 
-        for (int i=0;i<obstacles.length/2;i++) {
-            if (posY + i > CANVAS_MAX) {
+        for (int i=0;i<obstacles.length;i++) {
+            if (posY + i > CANVAS_MAX || posY -1 < CANVAS_MIN) {
                 break;
             }
             if (tiles[posX][posY+i-1] > 0) {
                 obstacles[i] = true;
             }
         }
-        for (int i=obstacles.length/2; i<obstacles.length-1;i++) {
-            if (posY + i + 1 > CANVAS_MAX) {
-                break;
-            }
-
-            if (tiles[posX+1][posY+i-1] > 0) {
-                obstacles[i] = true;
-            }
-        }
+//        for (int i=obstacles.length/2; i<obstacles.length-1;i++) {
+//            if (posY + i + 1 > CANVAS_MAX) {
+//                break;
+//            }
+//
+//            if (tiles[posX+1][posY+i-1] > 0) {
+//                obstacles[i] = true;
+//            }
+//        }
 
 //        if (this.selection.equals("epsilongreedytest")) {
 //            System.out.println("*************************************************************************************************");
@@ -381,7 +387,7 @@ public class Agent implements MarioAgent {
 
         // LEFT
         for (int i=Math.max(leftOutX, CANVAS_MIN);i<Math.min(leftX, CANVAS_MAX);i++) {
-            if (enemies[i][marioPos[1]] > 0 || enemies[i][marioPos[1] - marioMode] > 0) {
+            if (enemies[i][marioPos[1]] > 0 || enemies[i][Math.max(marioPos[1] - marioMode, CANVAS_MIN)] > 0) {
                 enemyTable[3] = true;
             }
         }
@@ -389,7 +395,7 @@ public class Agent implements MarioAgent {
 
         // RIGHT
         for (int i=Math.max(rightX+1, CANVAS_MIN);i<=Math.min(rightOutX, CANVAS_MAX);i++) {
-            if (enemies[i][marioPos[1]] > 0 || enemies[i][marioPos[1] - marioMode] > 0) {
+            if (enemies[i][marioPos[1]] > 0 || enemies[i][Math.max(marioPos[1] - marioMode, CANVAS_MIN)] > 0) {
                 enemyTable[4] = true;
             }
         }
@@ -516,11 +522,11 @@ public class Agent implements MarioAgent {
             }
         }
 
-        Q.get(state)[action] = ALPHA*(reward + GAMMA*maxValue - Q.get(state)[action]);
+        Q.get(state)[action] = alpha *(reward + GAMMA*maxValue - Q.get(state)[action]);
     }
 
     public void sarsaUpdate(String state, int action, double reward, String nextState, int nextAction) {
-        Q.get(state)[action] = ALPHA*(reward + GAMMA*Q.get(nextState)[nextAction] - Q.get(state)[action]);
+        Q.get(state)[action] = alpha *(reward + GAMMA*Q.get(nextState)[nextAction] - Q.get(state)[action]);
     }
 
     public void doubleqlearningUpdate(String state, int action, double reward, String nextState) {
@@ -537,7 +543,7 @@ public class Agent implements MarioAgent {
                 }
             }
 
-            Q.get(state)[action] = ALPHA*(reward + GAMMA*maxValue - Q.get(state)[action]);
+            Q.get(state)[action] = alpha *(reward + GAMMA*maxValue - Q.get(state)[action]);
         } else {
             double[] nextStateActions = Q.get(nextState);
             double maxValue = nextStateActions[0];
@@ -547,7 +553,7 @@ public class Agent implements MarioAgent {
                 }
             }
 
-            Q2.get(state)[action] = ALPHA*(reward + GAMMA*maxValue - Q2.get(state)[action]);
+            Q2.get(state)[action] = alpha *(reward + GAMMA*maxValue - Q2.get(state)[action]);
         }
     }
 
@@ -574,7 +580,7 @@ public class Agent implements MarioAgent {
             expectation += (epsilon/(double)ACTION_SPACE)*nextStateActions[i];
         }
 
-        Q.get(state)[action] = ALPHA*(reward + GAMMA*expectation - Q.get(state)[action]);
+        Q.get(state)[action] = alpha *(reward + GAMMA*expectation - Q.get(state)[action]);
     }
 
     @Override
@@ -599,7 +605,12 @@ public class Agent implements MarioAgent {
                 this.ddqnLite = new DDQNLite(selection);
             }
             this.ddqnLite.resetProgress(model);
-        }else {
+        } else if (this.algorithm.equals("ppo")) {
+            if (this.ppo == null) {
+                this.ppo = new PPO(selection);
+            }
+            this.ppo.resetProgress(model);
+        } else {
             this.resetProgress(model);
         }
     }
@@ -625,6 +636,9 @@ public class Agent implements MarioAgent {
         }
         if (this.ddqnLite != null) {
             this.ddqnLite.resetPerformanceData();
+        }
+        if (this.ppo != null) {
+            this.ppo.resetPerformanceData();
         }
     }
 
@@ -726,7 +740,7 @@ public class Agent implements MarioAgent {
             state.append('0');
         }
 
-        // 12. Obstacles: Indicates whether there exists obstacles in the 4 tiles in front of Mario.
+        // 12. Obstacles: Indicates whether there exists obstacles in the 5 tiles in front of Mario.
 
         int[][] tiles = model.getScreenSceneObservation();
 
@@ -739,7 +753,7 @@ public class Agent implements MarioAgent {
 
             STATE: [MARIO MODE (2 bits)] [VELOCITY DIRECTION (4 bits)] [STUCK (1 bit)] [ON GROUND (1 bit)] [CAN JUMP (1 bit)]
             [COLLIDED (1 bit)] [NEARBY (8 bits) TL T TR L R BL B BR] [MIDRANGE (8 bits) TL T TR L R BL B BR] [FARRANGE (8 bits) TL T TR L R BL B BR]
-            [BYSTOMP (1 bit)] [BYFIRE (1 bit)] [OBSTACLES (4 bits)]
+            [BYSTOMP (1 bit)] [BYFIRE (1 bit)] [OBSTACLES (5 bits)]
 
          */
     }
@@ -840,6 +854,8 @@ public class Agent implements MarioAgent {
             return dqnLite.getActions(model, timer);
         } else if (this.algorithm.equals("ddqnLite")) {
             return ddqnLite.getActions(model, timer);
+        } else if (this.algorithm.equals("ppo")) {
+            return ppo.getActions(model, timer);
         }
         String state = formulateState(model);
         double reward = computeReward(model);

@@ -4,6 +4,7 @@ import engine.core.MarioAgent;
 import engine.core.MarioForwardModel;
 import engine.core.MarioTimer;
 import engine.helper.GameStatus;
+import engine.sprites.FlowerEnemy;
 import org.datavec.image.loader.NativeImageLoader;
 import org.deeplearning4j.nn.api.OptimizationAlgorithm;
 import org.deeplearning4j.nn.conf.BackpropType;
@@ -25,22 +26,21 @@ import org.nd4j.linalg.indexing.SpecifiedIndex;
 import org.nd4j.linalg.learning.config.Sgd;
 import org.nd4j.linalg.lossfunctions.LossFunctions;
 
-import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.*;
 
-public class DDQN implements MarioAgent {
+public class PPO implements MarioAgent {
 
-    private ReplayBuffer replayBuffer;
+    private RolloutBuffer rolloutBuffer;
 
     private INDArray prevState;
 
     private MultiLayerConfiguration networkConfig;
-    private MultiLayerNetwork qNetwork;
+    private MultiLayerNetwork actor;
 
-    private MultiLayerNetwork targetNetwork;
+    private MultiLayerNetwork critic;
 
     private int prevAction;
 
@@ -66,15 +66,14 @@ public class DDQN implements MarioAgent {
 
     private static final int BATCH_SIZE = 32;
 
-    private static final int TRAIN_DELAY = 256; // number of steps between updates to the qNetwork
+    private static final int TRAIN_DELAY = 1; // number of trajectories
 
     private static int trainCounter = 0;
-
-    private static final int UPDATE_DELAY = 2048; // number of steps between the target networks params being updated to those of the q network
-
+    private static final int UPDATE_DELAY = 1; // number of trajectories
+    private static final double CLIP = 0.2;
     private static int updateCounter = 0;
 
-    private static final int BUFFER_CAPACITY = 8024;
+    private static final int BUFFER_CAPACITY = 1024;
     private NativeImageLoader loader;
 
     private String selection;
@@ -91,14 +90,15 @@ public class DDQN implements MarioAgent {
 
     public static final double GAMMA = 0.9;
 
-    public DDQN(String selection) {
-        this.replayBuffer = new ReplayBuffer();
+    public PPO(String selection) {
+        this.rolloutBuffer = new RolloutBuffer();
         this.prevState = null;
-        this.networkConfig = createConvModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
-        this.qNetwork = new MultiLayerNetwork(this.networkConfig);
-        this.targetNetwork = new MultiLayerNetwork(this.networkConfig);
-        this.qNetwork.init();
-        this.targetNetwork.init();
+        MultiLayerConfiguration actorConfig = createActorModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS, Agent.ACTION_SPACE);
+        MultiLayerConfiguration criticConfig = createCriticModel(seed, IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS);
+        this.actor = new MultiLayerNetwork(actorConfig);
+        this.critic = new MultiLayerNetwork(criticConfig);
+        this.actor.init();
+        this.critic.init();
         this.loader = new NativeImageLoader(IMAGE_HEIGHT, IMAGE_WIDTH, CHANNELS);
         this.selection = selection;
         this.performanceData = new ArrayList<>();
@@ -143,7 +143,7 @@ public class DDQN implements MarioAgent {
         this.performanceData = new ArrayList<>();
     }
 
-    public MultiLayerConfiguration createConvModel(int seed, int height, int width, int channels, int numActions) {
+    public MultiLayerConfiguration createActorModel(int seed, int height, int width, int channels, int numActions) {
         MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
                 .seed(seed)
                 .activation(Activation.RELU)
@@ -191,7 +191,7 @@ public class DDQN implements MarioAgent {
                 .layer(5, new OutputLayer.Builder()
                         .nIn(128)
                         .nOut(numActions)
-                        .activation(Activation.IDENTITY)
+                        .activation(Activation.SOFTMAX)
                         .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
                         .build())
 
@@ -201,56 +201,115 @@ public class DDQN implements MarioAgent {
         return conf;
     }
 
-    public void trainModel(double gamma) {
+    public MultiLayerConfiguration createCriticModel(int seed, int height, int width, int channels) {
+        MultiLayerConfiguration conf = new NeuralNetConfiguration.Builder()
+                .seed(seed)
+                .activation(Activation.RELU)
+                .weightInit(WeightInit.XAVIER)
+                .optimizationAlgo(OptimizationAlgorithm.STOCHASTIC_GRADIENT_DESCENT)
+                .updater(new Sgd(0.1))
+                .list()
+                .layer(0, new ConvolutionLayer.Builder() // 84x84x4 -> 80x80x16
+                        .nIn(4)
+                        .nOut(8)
+                        .kernelSize(5, 5)
+                        .stride(1, 1)
+                        .padding(0, 0)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(1, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 80x80x16 -> 8x8x16
+                        .kernelSize(10,10)
+                        .stride(10,10)
+                        .build())
+                .layer(2, new ConvolutionLayer.Builder() // 8x8x16 -> 8x8x32
+                        .nIn(8)
+                        .nOut(16)
+                        .kernelSize(3, 3)
+                        .stride(1, 1)
+                        .padding(1, 1)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(3, new SubsamplingLayer.Builder(SubsamplingLayer.PoolingType.MAX) // 8x8x32 -> 4x4x32
+                        .kernelSize(2,2)
+                        .stride(2,2)
+                        .build())
+                .layer(4, new ConvolutionLayer.Builder() // 4x4x32 -> 4x4x32
+                        .nIn(16)
+                        .nOut(16)
+                        .kernelSize(3, 3)
+                        .stride(1, 1)
+                        .padding(1, 1)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(4, new DenseLayer.Builder()
+                        .nIn(256)
+                        .nOut(128)
+                        .activation(Activation.RELU)
+                        .build())
+                .layer(5, new OutputLayer.Builder()
+                        .nIn(128)
+                        .nOut(1)
+                        .activation(Activation.IDENTITY)
+                        .lossFunction(LossFunctions.LossFunction.SQUARED_LOSS)
+                        .build())
+                .backpropType(BackpropType.Standard)
+                .setInputType(InputType.convolutional(height, width, channels))
+                .build();
+        return conf;
+    }
+
+    public void trainActor(double gamma) {
         // This should never happen but just in case
-        if (this.replayBuffer.size < BATCH_SIZE) {
+        if (this.rolloutBuffer.size < BATCH_SIZE) {
             return;
         }
 
-        ReplayBuffer samples = this.replayBuffer.sample(BATCH_SIZE);
+        RolloutBuffer samples = this.rolloutBuffer.sample(BATCH_SIZE);
+
+
+
 
         LinkedList<INDArray> states = samples.getStateBuffer();
         LinkedList<Integer> actions = samples.getActionBuffer();
         LinkedList<Double> rewards = samples.getRewardBuffer();
-        double[][] qOutputs = new double[BATCH_SIZE][Agent.ACTION_SPACE];
-        double[] targetOutputs = new double[BATCH_SIZE];
-        int[] argmax = new int[BATCH_SIZE];
-        //** Check if this getDouble() actually works
-        LinkedList<INDArray> nextStates = samples.getNextStateBuffer();
+        LinkedList<Double> advantages = samples.getAdvantageBuffer();
+        LinkedList<Double> oldLogProbabilities = samples.getLogProbabilityBuffer();
+        ArrayList<Double> policyRatios = new ArrayList<>();
+
+        // First obtain the new log probabilities
+        Iterator<INDArray> statesIter = states.iterator();
+        Iterator<Integer> actionsIter = actions.iterator();
+        Iterator<Double> oldLogIter = oldLogProbabilities.iterator();
+        while (statesIter.hasNext()) {
+            double[] actionDistribution = this.actor.output(statesIter.next()).toDoubleVector();
+            policyRatios.add(Math.exp(Math.log(actionDistribution[actionsIter.next()] - oldLogIter.next())));
+        }
+
+
+
+        double[] loss = new double[BATCH_SIZE];
         int i = 0;
+        for (double a : advantages) {
+            double g = a >= 0 ? (1 + CLIP)*a : (1 - CLIP)*a;
+            loss[i] = Math.min(policyRatios.get(i)*a, g);
+            i++;
+        }
+
+        double[][] qOutputs = new double[BATCH_SIZE][Agent.ACTION_SPACE];
+        //** Check if this getDouble() actually works
+        i = 0;
         for (INDArray state : states) {
-            qOutputs[i] = this.qNetwork.output(state.reshape(1, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)).toDoubleVector();
-            i++;
-        }
-        i = 0;
-        for (INDArray nextState : nextStates) {
-            double[] output = this.qNetwork.output(nextState).toDoubleVector();
-            int maxIndex = 0;
-            double maxValue = output[0];
-            for (int j=1;j<output.length;j++) {
-                if (output[j] > maxValue) {
-                    maxValue = output[j];
-                    maxIndex = j;
-                }
-            }
-            argmax[i] = maxIndex;
-            i++;
-        }
-        i = 0;
-        Iterator<Double> rewardsIter = rewards.iterator();
-        Iterator<INDArray> nextStatesIter = nextStates.iterator();
-        while (rewardsIter.hasNext()) {
-            targetOutputs[i] = rewardsIter.next() +  gamma*this.targetNetwork.output(nextStatesIter.next()).get().toDoubleVector()[argmax[i]];
+            qOutputs[i] = this.actor.output(state.reshape(1, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)).toDoubleVector();
             i++;
         }
         i = 0;
         for (Integer action : actions) {
-            qOutputs[i][action] = targetOutputs[i];
+            qOutputs[i][action] += loss[i];
             i++;
         }
 
         INDArray statesArr = Nd4j.create(BATCH_SIZE, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
-        Iterator<INDArray> statesIter = states.iterator();
+        statesIter = states.iterator();
         for (i=0; i<BATCH_SIZE;i++) {
             INDArrayIndex[] indices = {
                     new SpecifiedIndex(i),
@@ -261,7 +320,34 @@ public class DDQN implements MarioAgent {
         INDArray targetsArr = Nd4j.create(qOutputs);
         System.out.println(Arrays.toString(targetsArr.shape()));
 
-        this.qNetwork.fit(statesArr, targetsArr);
+        this.actor.fit(statesArr, targetsArr);
+    }
+
+    public void trainCritic() {
+
+        LinkedList<INDArray> states = this.rolloutBuffer.getStateBuffer();
+        LinkedList<Double> returns = this.rolloutBuffer.getReturnBuffer();
+
+        INDArray statesArr = Nd4j.create(states.size(), CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
+        Iterator<INDArray> statesIter = states.iterator();
+        for (int i=0; i<BATCH_SIZE;i++) {
+            INDArrayIndex[] indices = {
+                    new SpecifiedIndex(i),
+                    NDArrayIndex.all(),
+            };
+            statesArr.put(indices, statesIter.next());
+        }
+
+        System.out.println(states.size());
+        System.out.println(returns.size());
+
+        INDArray returnsArr = Nd4j.create(returns);
+
+        returnsArr.reshape(returns.size());
+        statesArr.reshape(states.size(), CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
+
+        this.critic.fit(statesArr, returnsArr);
+
     }
 
     public double max(double[] values) {
@@ -325,35 +411,39 @@ public class DDQN implements MarioAgent {
               NDArrayIndex.all(),
         };
         frame = frame.get(indices);
+
         boolean[] action;
-        this.replayBuffer.addContext(frame);
-        int nextActionIndex;
+
+        this.rolloutBuffer.addContext(frame);
+
+        int actionIndex;
         // If we do not have enough frames for a state and a next state (5 frames in the buffer), return a random action.
-        if (this.replayBuffer.getContextBuffer().size() <= CHANNELS) {
-            nextActionIndex = randomAction();
-            if (this.replayBuffer.getContextBuffer().size() == CHANNELS) {
-                this.prevState = this.replayBuffer.getNextStateContext();
-            }
-            return Agent.ACTION_MAP[nextActionIndex];
+        if (this.rolloutBuffer.getContextBuffer().size() <= CHANNELS) {
+            actionIndex = randomAction();
+            return Agent.ACTION_MAP[actionIndex];
         }
+
         long replayBufferTime = System.currentTimeMillis();
         // This is the (current state) but is the next state in our loss calculation
-        INDArray nextState = this.replayBuffer.getNextStateContext();
-        nextState = nextState.reshape(1, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
+
+        INDArray state = this.rolloutBuffer.getStateContext();
+        state = state.reshape(1, CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
         long nextStateTime = System.currentTimeMillis();
 
         // Get predicted action values from the q network
-        INDArray nextActionValues = this.qNetwork.output(nextState);
+        INDArray actorOutput = this.actor.output(state);
+        INDArray criticOutput = this.critic.output(state);
 
         long feedForwardTime = System.currentTimeMillis();
-        nextActionValues = nextActionValues.reshape(Agent.ACTION_SPACE);
-        // Perform epsilon greedy selection
-        double[] selection = epsilonGreedySelection(nextActionValues.get().toDoubleVector(), Agent.epsilon);
-        nextActionIndex = (int)selection[0];
-        double nextActionValue = selection[1];
-        action = Agent.ACTION_MAP[nextActionIndex];
+        actorOutput = actorOutput.reshape(Agent.ACTION_SPACE);
 
-        long actionSelectionTime = System.currentTimeMillis();
+        double[] actionDistribution = actorOutput.get().toDoubleVector();
+        double value = criticOutput.toDoubleVector()[0];
+        // Perform epsilon greedy selection
+        System.out.println(Arrays.toString(actionDistribution));
+        actionIndex = actionSelection(actionDistribution);
+        action = Agent.ACTION_MAP[actionIndex];
+        double logProbability = Math.log(actionDistribution[actionIndex]);
 
         // Update whether mario is on the ground
         updateOnTile(model.getMarioScreenTilePos(), model.getScreenSceneObservation());
@@ -364,22 +454,24 @@ public class DDQN implements MarioAgent {
         // Compute the reward
         double reward = computeReward(model);
         System.out.println("Reward: " + reward);
-        replayBuffer.addEntry(this.prevState, this.prevAction, reward, nextState);
+        rolloutBuffer.addEntry(state, actionIndex, reward, value, logProbability);
+        if (!model.getGameStatus().equals(GameStatus.RUNNING)) {
+            rolloutBuffer.completeTrajectory(GAMMA);
+            updateCounter++;
+            trainCounter++;
+        }
 
-        this.prevState = nextState;
-        this.prevAction = nextActionIndex;
         long trainStartTime = System.currentTimeMillis();
-        trainCounter++;
         if (trainCounter >= TRAIN_DELAY) {
             trainCounter = 0;
-            trainModel(GAMMA);
+            trainActor(GAMMA);
         }
         long trainEndTime = System.currentTimeMillis();
 
-        updateCounter++;
+
         if (updateCounter >= UPDATE_DELAY) {
             updateCounter = 0;
-            this.targetNetwork.setParams(this.qNetwork.params());
+            trainCritic();
         }
         long updateTime = System.currentTimeMillis();
 
@@ -400,22 +492,24 @@ public class DDQN implements MarioAgent {
         return rand.nextInt(Agent.ACTION_SPACE);
     }
 
-    public double[] epsilonGreedySelection(double[] actionValuesArray, double epsilon) {
-        Random rand = new Random();
-        double randomDouble = rand.nextDouble();
-        double maxValue = actionValuesArray[0];
-        int maxIndex = 0;
-        for (int i=1; i<actionValuesArray.length; i++) {
-            if (actionValuesArray[i] > maxValue) {
-                maxValue = actionValuesArray[i];
-                maxIndex = i;
+    public int actionSelection(double[] actionDistribution) {
+        double thresh = Math.random();
+        double cumulativeProbability = 0;
+        for (int i=0;i<actionDistribution.length;i++) {
+            cumulativeProbability += actionDistribution[i];
+            if (cumulativeProbability >= thresh) {
+                return i;
             }
         }
-        if (randomDouble <= epsilon) { // With probability of epsilon, select a random action
-            maxIndex = rand.nextInt(Agent.ACTION_SPACE);
-        }
+        return actionDistribution.length-1;
+    }
 
-        return new double[]{(double)maxIndex, maxValue};
+    public double entropy(double[] actionDistribution) {
+        double h = 0;
+        for (double p : actionDistribution) {
+            h -= p*Math.log(p);
+        }
+        return h;
     }
 
     @Override
@@ -512,36 +606,38 @@ public class DDQN implements MarioAgent {
         return reward;
     }
 
-    private static class ReplayBuffer {
+    private static class RolloutBuffer {
         public LinkedList<INDArray> stateBuffer;
-
-        public LinkedList<INDArray> nextStateBuffer;
         public LinkedList<Integer> actionBuffer;
         public LinkedList<Double> rewardBuffer;
-
         public LinkedList<INDArray> contextBuffer;
+        public LinkedList<Double> advantageBuffer;
+        public LinkedList<Double> logProbabilityBuffer;
+        public LinkedList<Double> valueBuffer;
 
+        public LinkedList<Double> returnBuffer;
         private int size;
+        private int trajectoryPointer;
         private int capacity;
         private int contextSize;
 
-        ReplayBuffer() {
+        RolloutBuffer() {
             this.stateBuffer = new LinkedList<>();
-            this.nextStateBuffer = new LinkedList<>();
             this.actionBuffer = new LinkedList<>();
             this.rewardBuffer = new LinkedList<>();
             this.contextBuffer = new LinkedList<>();
+            this.advantageBuffer = new LinkedList<>();
+            this.logProbabilityBuffer = new LinkedList<>();
+            this.valueBuffer = new LinkedList<>();
+            this.returnBuffer = new LinkedList<>();
             this.size = 0;
             this.contextSize = 0;
+            this.trajectoryPointer = -1;
             this.capacity = BUFFER_CAPACITY;
         }
 
         public LinkedList<INDArray> getStateBuffer() {
             return this.stateBuffer;
-        }
-
-        public LinkedList<INDArray> getNextStateBuffer() {
-            return this.nextStateBuffer;
         }
 
         public LinkedList<INDArray> getContextBuffer() {
@@ -556,19 +652,31 @@ public class DDQN implements MarioAgent {
             return this.rewardBuffer;
         }
 
-        public void addEntry(INDArray state, int action, double reward, INDArray nextState) {
+        public LinkedList<Double> getAdvantageBuffer() { return this.advantageBuffer; }
+
+        public LinkedList<Double> getLogProbabilityBuffer() { return this.logProbabilityBuffer; }
+
+        public LinkedList<Double> getReturnBuffer() { return this.returnBuffer; }
+
+        public void addEntry(INDArray state, int action, double reward, double value, double logProbability) {
             if (this.size >= this.capacity) {
                 this.stateBuffer.removeLast();
                 this.actionBuffer.removeLast();
                 this.rewardBuffer.removeLast();
-                this.nextStateBuffer.removeLast();
+                this.valueBuffer.removeLast();
+                this.logProbabilityBuffer.removeLast();
             } else {
                 this.size++;
             }
             this.stateBuffer.addFirst(state);
             this.actionBuffer.addFirst(action);
             this.rewardBuffer.addFirst(reward);
-            this.nextStateBuffer.addFirst(nextState);
+            this.valueBuffer.addFirst(value);
+            this.logProbabilityBuffer.addFirst(logProbability);
+            this.trajectoryPointer++;
+            if (this.trajectoryPointer >= this.size) {
+                this.trajectoryPointer = this.size-1;
+            }
         }
 
         public void addContext(INDArray frame) {
@@ -580,11 +688,31 @@ public class DDQN implements MarioAgent {
             this.contextBuffer.addFirst(frame);
         }
 
+        public void completeTrajectory(double gamma) {
+            double discountedReturn = 0;
+            for (int i=this.trajectoryPointer; i>0;i--) {
+                this.advantageBuffer.addFirst(rewardBuffer.get(i) + gamma*this.valueBuffer.get(i-1) - this.valueBuffer.get(i));
+            }
+            double[] returns = new double[trajectoryPointer+1];
+            for(int i=0;i<=trajectoryPointer;i++) {
+                discountedReturn += rewardBuffer.get(i);
+                returns[i] = discountedReturn;
+                discountedReturn *= gamma;
+            }
+
+            for (int i=trajectoryPointer; i>=0;i--) {
+                this.returnBuffer.addFirst(returns[i]);
+            }
+            this.trajectoryPointer = 0;
+
+
+        }
+
         public void addState(INDArray state) {
             this.stateBuffer.add(state);
         }
 
-        public INDArray getNextStateContext() {
+        public INDArray getStateContext() {
             INDArray img = Nd4j.zeros(CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
             INDArrayIndex[] indices0 = {
                     new SpecifiedIndex(0),
@@ -609,33 +737,8 @@ public class DDQN implements MarioAgent {
             return img;
         }
 
-        public INDArray getStateContext() {
-            INDArray img = Nd4j.zeros(CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH);
-            INDArrayIndex[] indices0 = {
-                    new SpecifiedIndex(0),
-                    NDArrayIndex.all(),
-            };
-            img.put(indices0, this.stateBuffer.get(1));
-            INDArrayIndex[] indices1 = {
-                    new SpecifiedIndex(1),
-                    NDArrayIndex.all(),
-            };
-            img.put(indices1, this.stateBuffer.get(2));
-            INDArrayIndex[] indices2 = {
-                    new SpecifiedIndex(2),
-                    NDArrayIndex.all(),
-            };
-            img.put(indices2, this.stateBuffer.get(3));
-            INDArrayIndex[] indices3 = {
-                    new SpecifiedIndex(3),
-                    NDArrayIndex.all(),
-            };
-            img.put(indices3, this.stateBuffer.get(4));
-            return img;
-        }
-
-        public ReplayBuffer sample(int batchSize) {
-            ReplayBuffer buffer = new ReplayBuffer();
+        public RolloutBuffer sample(int batchSize) {
+            RolloutBuffer buffer = new RolloutBuffer();
             Random rand = new Random();
             ArrayList<Integer> selected = new ArrayList<>();
             ArrayList<Integer> indices = new ArrayList<>();
@@ -651,7 +754,7 @@ public class DDQN implements MarioAgent {
             }
 
             for (int index : selected) {
-                buffer.addEntry(this.stateBuffer.get(index), this.actionBuffer.get(index), this.rewardBuffer.get(index), this.nextStateBuffer.get(index));
+                buffer.addEntry(this.stateBuffer.get(index), this.actionBuffer.get(index), this.rewardBuffer.get(index), this.valueBuffer.get(index), this.logProbabilityBuffer.get(index));
             }
 
             return buffer;
